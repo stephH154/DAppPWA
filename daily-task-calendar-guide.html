@@ -94,6 +94,21 @@
   .mock-tag.amber { color: var(--amber); background: var(--amber-soft); }
   .mock-tag.muted { color: var(--muted); background: var(--card); border: 1px solid var(--border); }
   .mock-note { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 8px; }
+
+  .sync-diagram {
+    background: var(--bg); border: 1px dashed var(--border); border-radius: 12px;
+    padding: 16px 10px; margin: 12px 0;
+    display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+  }
+  .sync-node {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px; font-size: 11.5px; min-width: 78px; text-align: center;
+  }
+  .sync-node.cloud { border-color: var(--green); background: var(--green-soft); font-weight: 600; }
+  .sync-node .sync-icon { font-size: 22px; }
+  .sync-link { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); font-size: 10px; min-width: 60px; }
+  .sync-link .sync-arrow { font-size: 16px; }
   .grip { color: var(--muted); font-size: 12px; flex-shrink: 0; }
   .arrow-hint { color: var(--red); font-weight: 700; }
 
@@ -173,7 +188,7 @@
       <div class="mock-row"><div class="mock-box"></div><div class="mock-title">倒垃圾</div><div class="mock-tag red">每日</div></div>
       <div class="mock-row"><div class="mock-box"></div><div class="mock-title">回客戶信</div></div>
     </div>
-    <p class="muted">已完成的任務除了標題劃掉變灰，整列背景也會加深一階，跟其他還沒做完的任務拉開對比，掃過去就看得出哪些做完了；而且**會自動沉到清單最下面**，未完成的排前面，不用一路掃過已完成的項目找剩下的事。日期文字下面「週幾 · 今天」那行旁邊有一個小圓環，顯示今天完成幾項（滑鼠移上去看完整的「3 / 7」），今天沒有任何任務時圓環不會出現；只在「今天」這一頁顯示，翻歷史不會有。</p>
+    <p class="muted">已完成的任務標題劃掉變灰，**會自動沉到清單最下面**，未完成的排前面。日期文字旁邊有一個小圓環顯示今天完成幾項（滑鼠移上去看完整的「3 / 7」），只在「今天」這一頁顯示。</p>
     <div class="dual">
       <div class="dual-col">
         <div class="dual-label">🖥️ 電腦</div>
@@ -237,7 +252,7 @@
       </div>
       <div class="dual-col">
         <div class="dual-label">📱 手機</div>
-        <p>兩個都用同一套觸控事件（pointer events）實作，手指滑動/拖曳邏輯跟滑鼠完全相同；抓握手把的觸控熱區有特別放大，比較好按住。</p>
+        <p>操作邏輯跟滑鼠完全相同，用手指滑動/拖曳即可；抓握手把的觸控熱區有特別放大，比較好按住。</p>
       </div>
     </div>
   </section>
@@ -253,7 +268,7 @@
     <div class="dual">
       <div class="dual-col">
         <div class="dual-label">🖥️ 電腦</div>
-        <p>滑鼠移到列上才浮現「完成」「移除」兩顆按鈕（靠 CSS <code>:hover</code> 顯示）。</p>
+        <p>滑鼠移到列上才浮現「完成」「移除」兩顆按鈕。</p>
       </div>
       <div class="dual-col">
         <div class="dual-label">📱 手機</div>
@@ -273,11 +288,11 @@
     <div class="dual">
       <div class="dual-col">
         <div class="dual-label">🖥️ 電腦</div>
-        <p>點 📅 叫出瀏覽器原生日期選擇器；「取消」按鈕靠 <code>:hover</code> 顯示。</p>
+        <p>點 📅 叫出瀏覽器內建的日期選擇器；滑鼠移到列上才會浮現「取消」按鈕。</p>
       </div>
       <div class="dual-col">
         <div class="dual-label">📱 手機</div>
-        <p>日期選擇器操作方式相同——是瀏覽器原生元件（<code>&lt;input type="date"&gt;</code>），手機上其實更好按；「取消」按鈕改成常駐顯示，不用先觸發。</p>
+        <p>日期選擇器操作方式相同，手機上其實更好按；「取消」按鈕改成常駐顯示，不用先觸發。</p>
       </div>
     </div>
   </section>
@@ -292,12 +307,12 @@
       <div class="mock-row" style="padding-left:22px"><div class="mock-box"></div><div class="mock-title">轉接頭</div></div>
     </div>
     <p>點這一列任何地方（除了每日/延期/備註/拖曳手把）= 展開／收合子任務，不用特別瞄準那個小箭頭。這個外層任務**沒有**自己的完成勾選框——子任務全部打勾，外層才自動變成完成；取消任何一個子任務，外層自動變回未完成。延期、滑除、拖曳排序、每日切換都是對整個任務（含子任務）一起生效；展開狀態下滑除移除會暫時關閉，收合才能滑除。</p>
-    <p class="muted">範本清單裡每個範本旁邊有「套用」「編輯」「刪除」——編輯會把名稱跟子任務內容抓回下面表單直接改，改完按「更新範本」；刪除或編輯範本都不影響已經套用出去的任務（那些任務的子任務清單是套用當下複製的一份，跟原本的範本已經沒關係了）。表單裡的子任務項目本身也能像一般任務一樣操作：拖曳手把排序、雙擊改名字、按「移除」單獨刪掉一項、輸入框+＋新增。子任務清單一旦套用出去變成正式任務後就固定了，不能事後再加新的子任務進去；也不能個別延期單一子任務。</p>
-    <p class="muted">子任務至少要保留一個——移除按鈕在只剩最後一個子任務時會被擋下來（跳提示），不會讓任務被清空到變成沒有子任務清單的樣子；真的不需要整個任務了，用整列的「移除」（滑除或「⋯」選單）直接刪掉整個任務。任務如果設成「每日」，跟一般任務一樣連續完成天數到有紀錄時會顯示 🔥 徽章。</p>
+    <p class="muted">範本清單裡每個範本旁邊有「套用」「編輯」「刪除」；編輯／刪除範本都不影響已經套用出去的任務。表單裡的子任務項目可以拖曳排序、雙擊改名字、「移除」刪掉一項。套用出去變成正式任務後子任務清單就固定了，不能再新增，也不能個別延期單一子任務。</p>
+    <p class="muted">子任務至少要保留一個，只剩最後一個時「移除」會被擋下來；真的不需要整個任務，用整列的「移除」直接刪掉。任務設成「每日」的話，一樣會顯示 🔥 連續天數徽章。</p>
     <div class="dual">
       <div class="dual-col">
         <div class="dual-label">🖥️ 電腦</div>
-        <p>展開後點子任務列任何地方（除了移除按鈕、標題本身）＝切換完成/未完成，整列都是按鈕，不用瞄準那個小圓框；雙擊子任務文字改名字；滑鼠移到列上會浮現「移除」按鈕；清單最下面輸入框可以新增子任務（新增後如果原本外層是完成狀態會變回未完成）。子任務不能拖曳排序——套用出來的正式任務刻意不提供這個，只有範本編輯表單裡整理草稿子任務清單時才能拖。</p>
+        <p>展開後點子任務列任何地方＝切換完成/未完成；雙擊改名字；滑鼠移到列上浮現「移除」按鈕；清單最下面輸入框可以新增子任務。套用出來的正式任務不能拖曳排序子任務，只有範本編輯表單裡的草稿才能拖。</p>
       </div>
       <div class="dual-col">
         <div class="dual-label">📱 手機</div>
@@ -341,7 +356,7 @@
   <section id="copy">
     <h2><span class="num">09</span> 複製清單</h2>
     <p>工具列右上「⋯ 更多」下拉裡的「複製清單」，或按 <span class="kbd">⌘/Ctrl</span> + <span class="kbd">K</span>，把今天的清單（含完成狀態）、明天預覽、已排程整理成一段純文字複製到剪貼簿，方便貼到 LINE、email 等地方。</p>
-    <p class="muted">上方橫向工具列：自動同步狀態、⌨️ 快捷鍵、「⋯ 更多」（複製清單/匯入 CSV/匯出/匯入備份收在這裡）。🔍 搜尋、📦 範本則貼在「今天」卡片左邊，跟卡片同高——這兩個常用，值得跟卡片本身綁在一起，視窗太窄時會自動改排到卡片上方。</p>
+    <p class="muted">上方橫向工具列：自動同步狀態、☁️ 雲端同步、「⋯ 更多」（複製清單/匯入 CSV/匯出/匯入備份/⌨️ 快捷鍵/建立新同步檔案收在這裡）。🔍 搜尋、📦 範本則貼在「今天」卡片左邊，視窗太窄時會自動改排到卡片上方。</p>
     <div class="dual">
       <div class="dual-col">
         <div class="dual-label">🖥️ 電腦</div>
@@ -374,11 +389,19 @@
     <ul>
       <li><strong>匯出備份</strong>：下載一份完整 JSON（不受 90 天限制），可以留著或手動搬到別的地方——任務、歷史、**範本**都包含在內；用舊版匯出的備份檔案沒有範本欄位，匯入時不會把現有範本清空，維持原樣</li>
       <li><strong>匯入備份</strong>：讀一個 JSON 檔案整包覆蓋現有資料，匯入前一定會跳確認</li>
-      <li><strong>自動同步本機檔案</strong>：只有 Chrome / Edge 支援，分兩顆按鈕——「🔗 連結同步檔案」是主要入口，用開啟檔案的方式選一個**已經存在**的 json 檔（例如雲端硬碟同步資料夾裡、另一台裝置已經在用的那個），語意上是「接上」不是「另存新檔」；「建立新同步檔案」是次要入口，只在真的還沒有同步檔案、要從零開始建一個的時候才用。**如果選到的檔案裡已經有資料**，兩個入口都會先跳一個三選一的小視窗（標題「同步檔案跟這裡都有資料」）：「確定」＝從檔案抓到這裡（覆蓋這台裝置的資料）、「覆蓋」＝用這台裝置的資料覆蓋檔案、「取消」＝整個同步都不設定。開機時也會讀一次同步檔案，如果內容跟這台裝置不一樣（代表別的裝置寫過），會跳出同一套三選一按鈕、但標題換成「同步資料有外部改變」、說明文字明講「發現「檔名」外部有改動」，跟連結新檔案那次講清楚是不同情境：確定＝載入檔案版本、覆蓋＝立刻用本機資料蓋過去、取消＝先不處理（維持本機，之後正常操作存檔時還是會自然覆蓋掉檔案）。**除了開機那一次，切回這個分頁/視窗時也會再檢查一次**（例如切去別的視窗、另一台裝置改了同步檔案，再切回來就會發現），不是常駐計時器一直輪詢，只有真的切回來的當下才檢查，一樣是「同步資料有外部改變」那套三選一</li>
-      <li><strong>🗑️ 清空資料</strong>（「⋯ 更多」下拉最下面，紅字）：把所有任務資料整包重置回第一次使用的空狀態（含 90 天內的近期歷史跟不受限的完整封存都清掉），按下去會先跳確認、提醒先匯出備份。如果當下有連結自動同步檔案，會**順便解除連結**（本機的 json 檔案本身不會被刪，只是不再自動寫入它）——不解除的話，清空後下一次存檔會把「清空後的空資料」寫回同步檔案，等於連同步檔案也一起清光</li>
-      <li><strong>重新授權</strong>：同步授權過期或跨瀏覽器工作階段失效時，同步按鈕會變成「重新授權：檔名」，點一下重新同意授權。授權成功後一樣會跳三選一：確定＝載入檔案版本、覆蓋＝立刻用本機資料蓋過去、**取消＝取消這次重新授權**（維持「需要重新授權」的狀態，不寫入、不改按鈕，等於這次點擊沒發生過），不是像以前那樣重新授權完直接無條件覆蓋掉檔案內容，也不是套用連結新檔案時「取消＝不設定同步」那種語意——同一個彈窗，三個情境（連結新檔案／開機比對／重新授權）只有「取消」按鈕的說明文字跟著情境換，「確定」「覆蓋」語意處處一樣</li>
-      <li><strong>☁️ 雲端同步</strong>（「⋯ 更多」下拉裡，手機也看得到這顆按鈕）：跟「自動同步本機檔案」是**二選一**，設定其中一個會自動解除另一個。這是唯一手機瀏覽器也能用的自動同步方式——File System Access API 手機完全不支援，但這個是單純 <code>fetch()</code> 打一個網址，桌面/手機都一樣能用。背後是自己部署一支免費的 Google Apps Script 當簡易後端（部署教學跟完整程式碼在 <code>daily-task-cloud-sync-apps-script.txt</code>），Web App 網址已經寫死在程式碼裡（<code>CLOUD_SYNC_URL</code> 常數，換裝置不用重貼那串網址），設定時**只需要填一組自訂的「密鑰」**（要跟 Apps Script 裡設定的一致，防止知道網址的人亂讀寫）。連結、開機比對、切回分頁、有衝突時的三選一，整套邏輯都跟本機同步檔案共用同一套，操作起來感覺不出差異，只是背後換了一條路徑。**如果是不同人各自用自己的裝置**：網址大家都填同一個，但每人要用**自己專屬的一組密鑰**（不是共用同一組）——後端會照密鑰把每個人的資料分開存，彼此看不到對方內容；新增一個人怎麼登記密鑰，見 <code>daily-task-cloud-sync-apps-script.txt</code> 裡的「加新人」說明</li>
+      <li><strong>自動同步本機檔案</strong>：只有 Chrome / Edge 支援。「🔗 本地同步」選一個**已經存在**的 json 檔接上（例如另一台裝置已經在用的那個）；「⋯ 更多」下拉裡的「建立新同步檔案」是還沒有同步檔案時、從零開始建一個。選到的檔案如果已經有資料，會跳出三選一：「確定」＝用檔案內容覆蓋這台裝置、「覆蓋」＝用這台裝置覆蓋檔案、「取消」＝不設定同步。開機、或切回這個分頁時，只要發現檔案內容跟本機不一樣，也會跳出同一套三選一（標題會換成「同步資料有外部改變」）</li>
+      <li><strong>🗑️ 清空資料</strong>（「⋯ 更多」下拉最下面，紅字）：把所有任務資料整包重置回第一次使用的空狀態，按下去會先跳確認、提醒先匯出備份。如果當下有連結自動同步，會**一併解除連結**（原本的檔案不會被刪，只是不再自動寫入它）</li>
+      <li><strong>重新授權</strong>：同步授權過期時，「🔗 本地同步」按鈕會變成「重新授權：檔名」，點一下重新同意授權，一樣會跳三選一；**取消＝取消這次重新授權**，不會改變任何東西</li>
+      <li><strong>☁️ 雲端同步</strong>（工具列上，手機版一樣看得到這顆按鈕）：跟「自動同步本機檔案」**二選一**，設定其中一個會自動解除另一個，手機也能用。設定時只要填一組**密鑰**（跟後端設定的要一致），網址已經內建好了不用自己貼。開機、切回分頁、發現資料有衝突時，操作起來跟本機同步檔案一樣是三選一</li>
     </ul>
+    <div class="sync-diagram">
+      <div class="sync-node"><span class="sync-icon">📱</span><span>你的裝置</span></div>
+      <div class="sync-link"><span class="sync-arrow">⇄</span><span class="sync-key">你的密鑰</span></div>
+      <div class="sync-node cloud"><span class="sync-icon">☁️</span><span>雲端</span></div>
+      <div class="sync-link"><span class="sync-arrow">⇄</span><span class="sync-key">另一組密鑰</span></div>
+      <div class="sync-node"><span class="sync-icon">💻</span><span>其他人的裝置</span></div>
+    </div>
+    <p class="mock-note">每個裝置用自己的密鑰對應自己的一份資料，彼此看不到對方內容</p>
     <p class="muted">這不是即時雙向同步，是「單向寫入 + 開機/切回分頁比對提醒」，兩台裝置真的同時改同一天才會需要手動選一份。本機同步檔案／雲端同步是二選一，不會同時生效。</p>
     <div class="dual">
       <div class="dual-col">
@@ -387,7 +410,7 @@
       </div>
       <div class="dual-col">
         <div class="dual-label">📱 手機</div>
-        <p>匯出/匯入還在，搬到卡片正上方那排按鈕裡（跟🔍搜尋、📦範本並排），點了會叫出手機原生的檔案分享/選檔介面。<strong>☁️ 雲端同步手機也能用</strong>（純 <code>fetch()</code>，不依賴 File System Access API）；本機同步檔案維持桌面限定——那個 API 手機瀏覽器（含 Chrome for Android）本來就不支援，沒有替代方案，改用雲端同步即可。</p>
+        <p>匯出/匯入還在，搬到卡片正上方那排按鈕裡（跟🔍搜尋、📦範本並排），點了會叫出手機原生的檔案分享/選檔介面。<strong>☁️ 雲端同步手機也能用</strong>；本機同步檔案維持桌面限定，手機改用雲端同步即可。</p>
       </div>
     </div>
   </section>
@@ -418,7 +441,7 @@
     <h2><span class="num">13</span> 已知限制</h2>
     <div class="limits">
       <div class="limit-item"><span class="mark">·</span>資料存在瀏覽器 <code>localStorage</code> + <code>IndexedDB</code>，換瀏覽器或換電腦不會自動有資料，要靠匯出/自動同步搬過去。</div>
-      <div class="limit-item"><span class="mark">·</span>任務管理本身（新增/完成/延期/範本/子任務/拖曳排序）手機瀏覽器都能正常操作，每節底下都有「🖥️ 電腦 / 📱 手機」對照說明；**本機同步檔案**用的 File System Access API、鍵盤快捷鍵、複製清單/CSV 匯入，這幾個手機上還是不支援（明天預覽/已排程原本靠 hover 才顯示的按鈕已經改成手機常駐顯示；子任務的改名字/移除則是收進子任務自己的「⋯」選單，都不在此限）——但自動同步本身手機已經有解法了，改用「☁️ 雲端同步」即可，見「備份 / 同步」一節。</div>
+      <div class="limit-item"><span class="mark">·</span>任務管理本身（新增/完成/延期/範本/子任務/拖曳排序）手機瀏覽器都能正常操作，每節底下都有「🖥️ 電腦 / 📱 手機」對照說明；手機上不支援的是**自動同步本機檔案**、鍵盤快捷鍵、複製清單/CSV 匯入——自動同步改用「☁️ 雲端同步」即可，見「備份 / 同步」一節。</div>
       <div class="limit-item"><span class="mark">·</span>自動同步是單向寫入 + 開機比對，不是即時雙向同步；沒有欄位級的合併，衝突時是整包二選一。</div>
       <div class="limit-item"><span class="mark">·</span>連續天數、搜尋歷史都是照本機 90 天內的紀錄算的，更久以前的資料只在完整備份裡，程式本身看不到。</div>
       <div class="limit-item"><span class="mark">·</span>範本套用出去之後，子任務可以改名字/新增/移除，但**不能拖曳排序**（草稿階段的範本編輯表單才能排序），也不能個別延期單一子任務。</div>

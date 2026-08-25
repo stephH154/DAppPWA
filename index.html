@@ -532,8 +532,6 @@
   .dropdown-menu .dropdown-item:hover { background: var(--bg); }
   .dropdown-menu .dropdown-item.danger { color: var(--red); }
   .dropdown-menu .dropdown-item.danger:hover { background: var(--red-soft); }
-  .dropdown-menu .dropdown-item.linked { color: var(--green); background: var(--green-soft); }
-  .dropdown-menu .dropdown-item.linked:hover { background: var(--green-soft); }
   .dropdown-menu .dropdown-divider { height: 1px; background: var(--border); margin: 4px 2px; }
 
   .detail-overlay {
@@ -727,18 +725,18 @@
   <div class="eyebrow" id="eyebrow">每日任務</div>
   <div class="toolbar" id="toolbar">
     <button class="tool-btn" id="syncBtn" style="display:none"></button>
-    <button class="tool-btn" id="createSyncFileBtn" style="display:none" title="從頭建立一個全新的同步檔案">建立新同步檔案</button>
-    <button class="tool-btn" id="shortcutsBtn" title="鍵盤快捷鍵">⌨️ 快捷鍵</button>
+    <button class="tool-btn" id="cloudSyncMenuBtn" title="雲端同步"><span class="side-btn-icon">☁️</span><span class="side-btn-label" id="cloudSyncMenuLabel">雲端同步</span></button>
     <div class="menu-wrap" id="menuWrap">
       <button class="tool-btn" id="moreBtn">⋯ 更多</button>
       <div class="dropdown-menu" id="moreMenu">
         <button type="button" class="dropdown-item" id="quickHelpBtn">💡 快速說明</button>
+        <button type="button" class="dropdown-item" id="shortcutsBtn">⌨️ 快捷鍵</button>
+        <button type="button" class="dropdown-item" id="createSyncFileBtn" style="display:none" title="從頭建立一個全新的同步檔案">建立新同步檔案</button>
         <button type="button" class="dropdown-item" id="copyBtn">複製清單</button>
         <button type="button" class="dropdown-item" id="csvImportBtn">📥 匯入 CSV</button>
         <button type="button" class="dropdown-item tool-btn" id="exportBtn">匯出備份</button>
         <button type="button" class="dropdown-item tool-btn" id="importBtn">匯入備份</button>
         <button type="button" class="dropdown-item" id="showDailyInTomorrowBtn">顯示明日每日任務</button>
-        <button type="button" class="dropdown-item" id="cloudSyncMenuBtn" title="雲端同步"><span class="side-btn-icon">☁️</span><span class="side-btn-label" id="cloudSyncMenuLabel">雲端同步</span></button>
         <div class="dropdown-divider"></div>
         <button type="button" class="dropdown-item danger" id="clearDataBtn">🗑️ 清空資料</button>
       </div>
@@ -1528,7 +1526,7 @@
       syncBtn.className = 'tool-btn linked';
       createSyncFileBtn.style.display = 'none';
     } else {
-      syncBtn.textContent = '🔗 連結同步檔案';
+      syncBtn.textContent = '🔗 本地同步';
       syncBtn.className = 'tool-btn';
       createSyncFileBtn.style.display = 'inline-flex';
     }
@@ -2184,28 +2182,32 @@
     }
   });
 
-  /* 手機寬度時整個上方工具列都藏起來（同步/建立新檔/快捷鍵/更多都在裡面，沒一個適合擠進窄畫面），
+  /* 手機寬度時整個上方工具列都藏起來（同步/建立新檔/更多都在裡面，沒一個適合擠進窄畫面），
      改把「匯出備份」「匯入備份」單獨拉出來搬到搜尋／範本那排（同一顆元素直接換父層，
      不是複製一份，避免出現重複 id）；寬度變回桌面時搬回原本「更多」下拉選單裡。
      雲端同步在手機上其實可以正常運作（不像檔案同步依賴 File System Access API），
      所以也一併搬出來；檔案同步按鈕本來就沒有另外處理，維持只在「更多」選單裡（手機看不到）。
-     雲端同步搬到手機工具列時額外換一次 class（'dropdown-item' <-> 'side-btn'），讓它在
-     手機上長得跟🔍搜尋／📦範本一樣是圖示卡片，不是下拉選單那種純文字列；搬回桌面「更多」
-     選單時換回 'dropdown-item'，避免圖示卡片樣式跑進下拉選單裡跟其他項目長得不一致。 */
+     雲端同步桌面版的正牌位置是工具列本身（跟同步/建立新檔同一排，不是收在「更多」裡——
+     這個按鈕用得夠頻繁，值得常駐顯示；換成把「⌨️ 快捷鍵」收進「更多」挪出空間），手機寬度
+     時再換一次 class（'tool-btn' <-> 'side-btn'），讓它在手機上長得跟🔍搜尋／📦範本一樣是
+     圖示卡片；用 insertBefore 塞回 menuWrap 前面，不是單純 appendChild 到工具列最後面，
+     否則位置會跑到「更多」按鈕後面去。 */
+  var toolbarEl = document.getElementById('toolbar');
+  var menuWrapEl = document.getElementById('menuWrap');
   var mobileLayoutQuery = window.matchMedia('(max-width: 560px)');
   function placeMobileToolbarItems(isMobile) {
     if (isMobile) {
       if (exportBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(exportBtn);
       if (importBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(importBtn);
       if (cloudSyncMenuBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(cloudSyncMenuBtn);
-      cloudSyncMenuBtn.classList.remove('dropdown-item');
+      cloudSyncMenuBtn.classList.remove('tool-btn');
       cloudSyncMenuBtn.classList.add('side-btn');
     } else {
       if (exportBtn.parentElement !== moreMenu) moreMenu.appendChild(exportBtn);
       if (importBtn.parentElement !== moreMenu) moreMenu.appendChild(importBtn);
-      if (cloudSyncMenuBtn.parentElement !== moreMenu) moreMenu.appendChild(cloudSyncMenuBtn);
+      if (cloudSyncMenuBtn.parentElement !== toolbarEl) toolbarEl.insertBefore(cloudSyncMenuBtn, menuWrapEl);
       cloudSyncMenuBtn.classList.remove('side-btn');
-      cloudSyncMenuBtn.classList.add('dropdown-item');
+      cloudSyncMenuBtn.classList.add('tool-btn');
     }
   }
   placeMobileToolbarItems(mobileLayoutQuery.matches);
