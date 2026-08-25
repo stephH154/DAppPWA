@@ -175,6 +175,7 @@
       <li><a href="#copy">複製清單</a></li>
       <li><a href="#history">歷史瀏覽</a></li>
       <li><a href="#backup">備份 / 同步</a></li>
+      <li><a href="#pwa">安裝成 App（PWA）</a></li>
       <li><a href="#shortcuts">鍵盤快捷鍵</a></li>
       <li><a href="#limits">已知限制</a></li>
     </ol>
@@ -415,8 +416,24 @@
     </div>
   </section>
 
+  <section id="pwa">
+    <h2><span class="num">12</span> 安裝成 App（PWA）</h2>
+    <p>透過已經部署上線的網址開啟時（不是直接開本機這份 html 檔案），可以把這個工具「安裝」成一個獨立的 App 圖示——不用先開瀏覽器、也不會有網址列，離線時也能開。</p>
+    <p class="muted">資料還是存在瀏覽器的 <code>localStorage</code>／<code>IndexedDB</code> 裡，跟裝不裝這個 App 圖示無關；清瀏覽器資料一樣會清掉，要跟前面的「備份 / 同步」分開想。改版之後通常整個關掉再重新打開就會抓到新版本。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>Chrome / Edge 網址列右側會有一個「安裝」圖示，點一下即可；或瀏覽器選單裡找「安裝〇〇」。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>Android（Chrome）：選單「⋮」→「新增至主畫面」或「安裝應用程式」。iPhone（Safari）：分享按鈕 → 「加入主畫面」。</p>
+      </div>
+    </div>
+  </section>
+
   <section id="shortcuts">
-    <h2><span class="num">12</span> 鍵盤快捷鍵</h2>
+    <h2><span class="num">13</span> 鍵盤快捷鍵</h2>
     <div class="kbd-row"><span class="kbd">N</span><span>新增任務（僅限「今天」）</span></div>
     <div class="kbd-row"><span class="kbd">←</span><span class="kbd">→</span><span>切換日期</span></div>
     <div class="kbd-row"><span class="kbd">⌘/Ctrl</span><span class="kbd">K</span><span>複製今天清單</span></div>
@@ -438,9 +455,10 @@
   </section>
 
   <section id="limits">
-    <h2><span class="num">13</span> 已知限制</h2>
+    <h2><span class="num">14</span> 已知限制</h2>
     <div class="limits">
       <div class="limit-item"><span class="mark">·</span>資料存在瀏覽器 <code>localStorage</code> + <code>IndexedDB</code>，換瀏覽器或換電腦不會自動有資料，要靠匯出/自動同步搬過去。</div>
+      <div class="limit-item"><span class="mark">·</span>「安裝成 App」只有透過已部署上線的網址開啟時才有作用，直接開本機這份 html 檔案不會出現安裝選項，其他功能不受影響。</div>
       <div class="limit-item"><span class="mark">·</span>任務管理本身（新增/完成/延期/範本/子任務/拖曳排序）手機瀏覽器都能正常操作，每節底下都有「🖥️ 電腦 / 📱 手機」對照說明；手機上不支援的是**自動同步本機檔案**、鍵盤快捷鍵、複製清單/CSV 匯入——自動同步改用「☁️ 雲端同步」即可，見「備份 / 同步」一節。</div>
       <div class="limit-item"><span class="mark">·</span>自動同步是單向寫入 + 開機比對，不是即時雙向同步；沒有欄位級的合併，衝突時是整包二選一。</div>
       <div class="limit-item"><span class="mark">·</span>連續天數、搜尋歷史都是照本機 90 天內的紀錄算的，更久以前的資料只在完整備份裡，程式本身看不到。</div>
