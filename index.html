@@ -69,6 +69,8 @@
   .side-btn:hover { border-color: var(--ink); }
   .side-btn:hover .side-btn-label { color: var(--ink); }
   .side-btn:active { transform: scale(.96); }
+  .side-btn.linked { border-color: var(--green); background: var(--green-soft); }
+  .side-btn.linked .side-btn-label { color: var(--green); }
 
   .task-menu-btn {
     display: none;
@@ -530,6 +532,8 @@
   .dropdown-menu .dropdown-item:hover { background: var(--bg); }
   .dropdown-menu .dropdown-item.danger { color: var(--red); }
   .dropdown-menu .dropdown-item.danger:hover { background: var(--red-soft); }
+  .dropdown-menu .dropdown-item.linked { color: var(--green); background: var(--green-soft); }
+  .dropdown-menu .dropdown-item.linked:hover { background: var(--green-soft); }
   .dropdown-menu .dropdown-divider { height: 1px; background: var(--border); margin: 4px 2px; }
 
   .detail-overlay {
@@ -734,7 +738,7 @@
         <button type="button" class="dropdown-item tool-btn" id="exportBtn">匯出備份</button>
         <button type="button" class="dropdown-item tool-btn" id="importBtn">匯入備份</button>
         <button type="button" class="dropdown-item" id="showDailyInTomorrowBtn">顯示明日每日任務</button>
-        <button type="button" class="dropdown-item" id="cloudSyncMenuBtn">☁️ 雲端同步</button>
+        <button type="button" class="dropdown-item" id="cloudSyncMenuBtn" title="雲端同步"><span class="side-btn-icon">☁️</span><span class="side-btn-label" id="cloudSyncMenuLabel">雲端同步</span></button>
         <div class="dropdown-divider"></div>
         <button type="button" class="dropdown-item danger" id="clearDataBtn">🗑️ 清空資料</button>
       </div>
@@ -815,6 +819,7 @@
     <li>左邊 ⠿ 按住拖曳 ＝ 排序</li>
     <li>點「每日」標籤 ＝ 設成每天自動出現</li>
     <li>往右滑 ＝ 移除（5 秒內可復原）</li>
+    <li>「⋯ 更多」裡的 ☁️ 雲端同步 ＝ 跨裝置自動同步（手機也能用）</li>
   </ul>
   <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
     <button type="button" class="choice-btn primary" id="welcomeStartBtn">開始使用</button>
@@ -1110,6 +1115,7 @@
   var syncConflictOverwriteBtn = document.getElementById('syncConflictOverwrite');
   var syncConflictCancelBtn = document.getElementById('syncConflictCancel');
   var cloudSyncMenuBtn = document.getElementById('cloudSyncMenuBtn');
+  var cloudSyncMenuLabel = document.getElementById('cloudSyncMenuLabel');
   var cloudSyncOverlay = document.getElementById('cloudSyncOverlay');
   var cloudSyncModal = document.getElementById('cloudSyncModal');
   var cloudSyncClose = document.getElementById('cloudSyncClose');
@@ -1645,7 +1651,8 @@
 
   function updateCloudSyncUi() {
     var connected = !!cloudSyncToken;
-    cloudSyncMenuBtn.textContent = connected ? '☁️ 雲端同步（已連結）' : '☁️ 雲端同步';
+    cloudSyncMenuLabel.textContent = connected ? '雲端同步（已連結）' : '雲端同步';
+    cloudSyncMenuBtn.classList.toggle('linked', connected);
     cloudSyncTokenInput.value = cloudSyncToken;
     cloudSyncDisconnectBtn.style.display = connected ? 'block' : 'none';
   }
@@ -1824,6 +1831,8 @@
       if (action === 'overwrite') pushToActiveSync();
     });
   }
+
+  updateCloudSyncUi(); // 開機就反映目前雲端同步狀態（已連結的話按鈕圖示要一開始就顯示綠色，不用等使用者自己點開設定視窗才看得到）
 
   if (FS_SUPPORTED) {
     syncBtn.style.display = 'inline-flex';
@@ -2179,17 +2188,24 @@
      改把「匯出備份」「匯入備份」單獨拉出來搬到搜尋／範本那排（同一顆元素直接換父層，
      不是複製一份，避免出現重複 id）；寬度變回桌面時搬回原本「更多」下拉選單裡。
      雲端同步在手機上其實可以正常運作（不像檔案同步依賴 File System Access API），
-     所以也一併搬出來；檔案同步按鈕本來就沒有另外處理，維持只在「更多」選單裡（手機看不到）。 */
+     所以也一併搬出來；檔案同步按鈕本來就沒有另外處理，維持只在「更多」選單裡（手機看不到）。
+     雲端同步搬到手機工具列時額外換一次 class（'dropdown-item' <-> 'side-btn'），讓它在
+     手機上長得跟🔍搜尋／📦範本一樣是圖示卡片，不是下拉選單那種純文字列；搬回桌面「更多」
+     選單時換回 'dropdown-item'，避免圖示卡片樣式跑進下拉選單裡跟其他項目長得不一致。 */
   var mobileLayoutQuery = window.matchMedia('(max-width: 560px)');
   function placeMobileToolbarItems(isMobile) {
     if (isMobile) {
       if (exportBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(exportBtn);
       if (importBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(importBtn);
       if (cloudSyncMenuBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(cloudSyncMenuBtn);
+      cloudSyncMenuBtn.classList.remove('dropdown-item');
+      cloudSyncMenuBtn.classList.add('side-btn');
     } else {
       if (exportBtn.parentElement !== moreMenu) moreMenu.appendChild(exportBtn);
       if (importBtn.parentElement !== moreMenu) moreMenu.appendChild(importBtn);
       if (cloudSyncMenuBtn.parentElement !== moreMenu) moreMenu.appendChild(cloudSyncMenuBtn);
+      cloudSyncMenuBtn.classList.remove('side-btn');
+      cloudSyncMenuBtn.classList.add('dropdown-item');
     }
   }
   placeMobileToolbarItems(mobileLayoutQuery.matches);
