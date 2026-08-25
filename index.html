@@ -1443,8 +1443,8 @@
   // 陌生使用者各自填自己網址的產品；寫死之後每台裝置只需要輸入 TOKEN，不用每次都找那串
   // 又長又難記的 script.google.com 網址複製貼上。部署好 Apps Script 之後把下面這行換成
   // 實際拿到的網址（daily-task-cloud-sync-apps-script.txt 裡的部署步驟第 7 步）。
-  var CLOUD_SYNC_URL = '';
-  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec');
+  var CLOUD_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec';
+  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
 
   function idbOpen() {
     return new Promise(function (resolve, reject) {
