@@ -909,9 +909,8 @@
     <div class="shortcuts-title">☁️ 雲端同步</div>
     <button class="round-btn" id="cloudSyncClose">×</button>
   </div>
-  <div class="detail-meta" style="margin-top:6px">貼上部署好的 Google Apps Script 網址跟自訂密鑰（設定教學見 daily-task-calendar-guide.html）。跟「本機同步檔案」是二選一，設定這裡會自動解除本機檔案連結。</div>
-  <input type="text" id="cloudSyncUrlInput" class="search-input" placeholder="Web App 網址（https://script.google.com/.../exec）" style="margin-top:14px">
-  <input type="text" id="cloudSyncTokenInput" class="search-input" placeholder="密鑰（跟 Apps Script 裡的 TOKEN 要一樣）">
+  <div class="detail-meta" style="margin-top:6px">網址已經內建好了，輸入跟 Apps Script 裡設定的同一組密鑰就好（設定教學見 daily-task-calendar-guide.html）。跟「本機同步檔案」是二選一，設定這裡會自動解除本機檔案連結。</div>
+  <input type="text" id="cloudSyncTokenInput" class="search-input" placeholder="密鑰（跟 Apps Script 裡的 TOKEN 要一樣）" style="margin-top:14px">
   <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
     <button type="button" class="choice-btn primary" id="cloudSyncSaveBtn">儲存並連結</button>
     <button type="button" class="choice-btn danger" id="cloudSyncDisconnectBtn" style="display:none">解除雲端同步</button>
@@ -926,7 +925,6 @@
   var KEY_TEMPLATES = 'dtc_templates';
   var KEY_SHOW_DAILY_TOMORROW = 'dtc_showDailyInTomorrow';
   var KEY_ONBOARDING_SEEN = 'dtc_onboardingSeen';
-  var KEY_CLOUD_SYNC_URL = 'dtc_cloudSyncUrl';
   var KEY_CLOUD_SYNC_TOKEN = 'dtc_cloudSyncToken';
   // 匯出格式的版號——欄位是陸續加上去的（templates、skipDailyTomorrow…），之前都是用
   // 「這個欄位存不存在」土法煉鋼判斷要不要相容處理，加個明確版號之後，之後格式再變，
@@ -1115,7 +1113,6 @@
   var cloudSyncOverlay = document.getElementById('cloudSyncOverlay');
   var cloudSyncModal = document.getElementById('cloudSyncModal');
   var cloudSyncClose = document.getElementById('cloudSyncClose');
-  var cloudSyncUrlInput = document.getElementById('cloudSyncUrlInput');
   var cloudSyncTokenInput = document.getElementById('cloudSyncTokenInput');
   var cloudSyncSaveBtn = document.getElementById('cloudSyncSaveBtn');
   var cloudSyncDisconnectBtn = document.getElementById('cloudSyncDisconnectBtn');
@@ -1441,8 +1438,13 @@
   // 只會有一種在生效（見 activeSyncTransport()），不會兩邊同時寫。手機瀏覽器不支援
   // File System Access API，但 fetch() 到一個網址不需要任何特殊瀏覽器能力，這條路線
   // 是唯一手機也能用的自動同步方式。
-  var cloudSyncUrl = loadJSON(KEY_CLOUD_SYNC_URL, '');
-  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
+  //
+  // 網址直接寫死在程式碼裡——這是「我自己的」個人工具，只有我自己會設定同步，不是給
+  // 陌生使用者各自填自己網址的產品；寫死之後每台裝置只需要輸入 TOKEN，不用每次都找那串
+  // 又長又難記的 script.google.com 網址複製貼上。部署好 Apps Script 之後把下面這行換成
+  // 實際拿到的網址（daily-task-cloud-sync-apps-script.txt 裡的部署步驟第 7 步）。
+  var CLOUD_SYNC_URL = '';
+  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec');
 
   function idbOpen() {
     return new Promise(function (resolve, reject) {
@@ -1549,15 +1551,15 @@
   // 這是這個做法唯一需要小心的地方，其餘就是普通的 fetch。token 放進 JSON body 本身，
   // 不是放 header——放 header 一樣會觸發 preflight，等於白做。
   function cloudSyncFetchText() {
-    if (!cloudSyncUrl || !cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
-    var url = cloudSyncUrl + (cloudSyncUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken);
+    if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
+    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken);
     return fetch(url).then(function (res) { return res.text(); });
   }
 
   function cloudSyncPushRemote() {
-    if (!cloudSyncUrl || !cloudSyncToken) return Promise.resolve();
+    if (!cloudSyncToken) return Promise.resolve();
     return buildExportPayload().then(function (payload) {
-      return fetch(cloudSyncUrl, {
+      return fetch(CLOUD_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ token: cloudSyncToken, payload: payload })
@@ -1568,12 +1570,13 @@
   // 目前生效中的同步方式——本機檔案／雲端兩者互斥，同一時間只會有一個算數（見設定雲端同步
   // 時會先解除本機檔案連結、反之亦然）。resolveSyncDiff()／pushToActiveSync() 都透過這個
   // 介面操作，不用各自分別判断要走哪一條路，之後如果還要加第三種同步方式，也只要多實作
-  // 這三個方法就好，不用動到比對/解決衝突的邏輯本身。
+  // 這三個方法就好，不用動到比對/解決衝突的邏輯本身。網址是寫死的常數（CLOUD_SYNC_URL），
+  // 只有 token 是使用者輸入、需要判斷「有沒有設定」的部分。
   function activeSyncTransport() {
     if (fileHandle && !needsReauth) {
       return { label: fileHandle.name, readText: function () { return fileHandle.getFile().then(function (f) { return f.text(); }); }, write: writeToLinkedFile };
     }
-    if (cloudSyncUrl && cloudSyncToken) {
+    if (cloudSyncToken) {
       return { label: '雲端同步', readText: cloudSyncFetchText, write: cloudSyncPushRemote };
     }
     return null;
@@ -1634,18 +1637,15 @@
     updateSyncBtn();
   }
   function disconnectCloudSyncSilently() {
-    if (!cloudSyncUrl && !cloudSyncToken) return;
-    cloudSyncUrl = '';
+    if (!cloudSyncToken) return;
     cloudSyncToken = '';
-    localStorage.removeItem(KEY_CLOUD_SYNC_URL);
     localStorage.removeItem(KEY_CLOUD_SYNC_TOKEN);
     updateCloudSyncUi();
   }
 
   function updateCloudSyncUi() {
-    var connected = !!(cloudSyncUrl && cloudSyncToken);
+    var connected = !!cloudSyncToken;
     cloudSyncMenuBtn.textContent = connected ? '☁️ 雲端同步（已連結）' : '☁️ 雲端同步';
-    cloudSyncUrlInput.value = cloudSyncUrl;
     cloudSyncTokenInput.value = cloudSyncToken;
     cloudSyncDisconnectBtn.style.display = connected ? 'block' : 'none';
   }
@@ -1663,16 +1663,17 @@
   cloudSyncOverlay.addEventListener('click', closeCloudSyncModal);
 
   cloudSyncSaveBtn.addEventListener('click', function () {
-    var url = cloudSyncUrlInput.value.trim();
     var token = cloudSyncTokenInput.value.trim();
-    if (!url || !token) {
-      alert('網址跟密鑰都要填。');
+    if (!token) {
+      alert('密鑰要填。');
+      return;
+    }
+    if (CLOUD_SYNC_URL.indexOf('REPLACE_WITH_') === 0) {
+      alert('程式碼裡的 CLOUD_SYNC_URL 還是預留字串，還沒換成實際部署的 Apps Script 網址。');
       return;
     }
     disconnectFileSyncSilently();
-    cloudSyncUrl = url;
     cloudSyncToken = token;
-    saveJSON(KEY_CLOUD_SYNC_URL, cloudSyncUrl);
     saveJSON(KEY_CLOUD_SYNC_TOKEN, cloudSyncToken);
     updateCloudSyncUi();
     // 連結當下先比對一次，跟連結本機檔案同一個道理——這個網址背後可能早就有資料了
@@ -2176,15 +2177,19 @@
 
   /* 手機寬度時整個上方工具列都藏起來（同步/建立新檔/快捷鍵/更多都在裡面，沒一個適合擠進窄畫面），
      改把「匯出備份」「匯入備份」單獨拉出來搬到搜尋／範本那排（同一顆元素直接換父層，
-     不是複製一份，避免出現重複 id）；寬度變回桌面時搬回原本「更多」下拉選單裡。 */
+     不是複製一份，避免出現重複 id）；寬度變回桌面時搬回原本「更多」下拉選單裡。
+     雲端同步在手機上其實可以正常運作（不像檔案同步依賴 File System Access API），
+     所以也一併搬出來；檔案同步按鈕本來就沒有另外處理，維持只在「更多」選單裡（手機看不到）。 */
   var mobileLayoutQuery = window.matchMedia('(max-width: 560px)');
   function placeMobileToolbarItems(isMobile) {
     if (isMobile) {
       if (exportBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(exportBtn);
       if (importBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(importBtn);
+      if (cloudSyncMenuBtn.parentElement !== sideToolbarEl) sideToolbarEl.appendChild(cloudSyncMenuBtn);
     } else {
       if (exportBtn.parentElement !== moreMenu) moreMenu.appendChild(exportBtn);
       if (importBtn.parentElement !== moreMenu) moreMenu.appendChild(importBtn);
+      if (cloudSyncMenuBtn.parentElement !== moreMenu) moreMenu.appendChild(cloudSyncMenuBtn);
     }
   }
   placeMobileToolbarItems(mobileLayoutQuery.matches);
