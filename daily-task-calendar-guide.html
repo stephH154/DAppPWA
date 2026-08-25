@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>使用手冊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #ece6d5;
+    --card: #f7f3e7;
+    --border: #c9bfa4;
+    --ink: #2c2a22;
+    --muted: #857d68;
+    --red: #a5372a;
+    --red-soft: #f3e3d8;
+    --green: #3c6b48;
+    --green-soft: #e3ecd9;
+    --amber: #a5780f;
+    --amber-soft: #f6ecd3;
+    --shadow: 0 1px 2px rgba(44,42,34,.05), 0 12px 28px rgba(44,42,34,.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    padding: 48px 20px 90px;
+  }
+  .shell { max-width: 720px; margin: 0 auto; }
+
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 8px;
+  }
+  h1 {
+    font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 28px;
+    margin: 0 0 8px;
+  }
+  .intro { font-size: 13.5px; color: var(--muted); line-height: 1.7; margin: 0 0 28px; max-width: 60ch; }
+
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 20px;
+    margin-bottom: 36px;
+    box-shadow: var(--shadow);
+  }
+  nav.toc .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 24px; font-size: 12.5px; line-height: 1.9; }
+  nav.toc a { color: var(--ink); text-decoration: none; }
+  nav.toc a:hover { color: var(--red); text-decoration: underline; }
+  .intro a { color: var(--red); text-decoration: underline dotted; text-underline-offset: 3px; }
+  .intro a:hover { text-decoration-style: solid; }
+
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 22px 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    scroll-margin-top: 20px;
+  }
+  section h2 {
+    font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 18px;
+    margin: 0 0 4px; display: flex; align-items: center; gap: 8px;
+  }
+  section h2 .num { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 600; }
+  section p { font-size: 13px; line-height: 1.7; color: var(--ink); margin: 8px 0; }
+  section p.muted { color: var(--muted); font-size: 12px; }
+  section ul { font-size: 13px; line-height: 1.75; padding-left: 20px; margin: 8px 0; }
+  section code { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+
+  .mock {
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 12px 0;
+    font-size: 12.5px;
+  }
+  .mock-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  .mock-row:last-child { border-bottom: none; }
+  .mock-box { width: 14px; height: 14px; border-radius: 5px; border: 1.5px solid var(--border); flex-shrink: 0; }
+  .mock-box.on { background: var(--green); border-color: var(--green); }
+  .mock-title { flex: 1; }
+  .mock-title.off { text-decoration: line-through; color: var(--muted); }
+  .mock-tag { font-size: 9.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+  .mock-tag.red { color: var(--red); background: var(--red-soft); }
+  .mock-tag.green { color: var(--green); background: var(--green-soft); }
+  .mock-tag.amber { color: var(--amber); background: var(--amber-soft); }
+  .mock-tag.muted { color: var(--muted); background: var(--card); border: 1px solid var(--border); }
+  .mock-note { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 8px; }
+  .grip { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .arrow-hint { color: var(--red); font-weight: 700; }
+
+  .kbd {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 22px; height: 20px; padding: 0 5px;
+    border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 5px; background: var(--card); color: var(--ink);
+    font-size: 10.5px; font-weight: 600; flex-shrink: 0;
+  }
+  .kbd-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; color: var(--muted); }
+
+  .limits { display: grid; gap: 10px; }
+  .limit-item { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.6; }
+  .limit-item .mark { color: var(--red); flex-shrink: 0; font-weight: 700; }
+
+  .dual {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+  }
+  .dual-col { min-width: 0; }
+  .dual-col + .dual-col { border-left: 1px solid var(--border); padding-left: 16px; }
+  .dual-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    color: var(--muted); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dual-col p, .dual-col ul { margin: 0 0 6px; }
+  .dual-col ul { padding-left: 18px; }
+  .dual-unsupported {
+    font-size: 12.5px; color: var(--red); font-style: italic;
+  }
+  @media (max-width: 600px) {
+    .dual { grid-template-columns: 1fr; }
+    .dual-col + .dual-col { border-left: none; padding-left: 0; border-top: 1px dashed var(--border); padding-top: 12px; }
+  }
+
+  .swipe-demo { position: relative; overflow: hidden; border-radius: 10px; }
+  .swipe-demo .bg { position: absolute; inset: 0; background: var(--red); color: #fff; display: flex; align-items: center; padding-left: 16px; font-size: 12px; font-weight: 700; }
+  .swipe-demo .front { position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; transform: translateX(38%); display: flex; align-items: center; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <p class="eyebrow">每日任務</p>
+  <h1>使用手冊</h1>
+  <p class="intro">這頁整理目前這支工具的所有功能跟操作方式，附示意圖。工具本身是 <a href="daily-task-calendar.html"><code>daily-task-calendar.html</code></a>，跟這份手冊放在同一個資料夾。</p>
+
+  <nav class="toc">
+    <div class="toc-title">目錄</div>
+    <ol>
+      <li><a href="#basics">今天怎麼用</a></li>
+      <li><a href="#daily">每日任務 + 連續天數</a></li>
+      <li><a href="#swipe">滑除 / 拖曳排序</a></li>
+      <li><a href="#tomorrow">明天預覽</a></li>
+      <li><a href="#schedule">已排程</a></li>
+      <li><a href="#templates">任務範本（子任務）</a></li>
+      <li><a href="#detail">備註側欄</a></li>
+      <li><a href="#search">搜尋</a></li>
+      <li><a href="#copy">複製清單</a></li>
+      <li><a href="#history">歷史瀏覽</a></li>
+      <li><a href="#backup">備份 / 同步</a></li>
+      <li><a href="#shortcuts">鍵盤快捷鍵</a></li>
+      <li><a href="#limits">已知限制</a></li>
+    </ol>
+  </nav>
+
+  <section id="basics">
+    <h2><span class="num">01</span> 今天怎麼用</h2>
+    <p>打開就是「今天」這一頁。每一列是一個任務，操作都在同一列上：</p>
+    <div class="mock">
+      <div class="mock-row"><div class="mock-box on"></div><div class="mock-title off">繳電費</div></div>
+      <div class="mock-row"><div class="mock-box"></div><div class="mock-title">倒垃圾</div><div class="mock-tag red">每日</div></div>
+      <div class="mock-row"><div class="mock-box"></div><div class="mock-title">回客戶信</div></div>
+    </div>
+    <p class="muted">已完成的任務除了標題劃掉變灰，整列背景也會加深一階，跟其他還沒做完的任務拉開對比，掃過去就看得出哪些做完了；而且**會自動沉到清單最下面**，未完成的排前面，不用一路掃過已完成的項目找剩下的事。日期文字下面「週幾 · 今天」那行旁邊有一個小圓環，顯示今天完成幾項（滑鼠移上去看完整的「3 / 7」），今天沒有任何任務時圓環不會出現；只在「今天」這一頁顯示，翻歷史不會有。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <ul>
+          <li>點列上任何地方（除了下面列的例外）= 標記完成／取消完成，整列都當一顆大按鈕，不用特別瞄準那個小圓框</li>
+          <li>雙擊標題文字 = 原地改名字（單擊保留給整列的完成切換，不會誤觸）</li>
+          <li>下方輸入框打字、按 Enter 或點「＋」= 新增任務</li>
+          <li>已完成的任務**不能**改名字、也**不能**滑除移除——做完就定案了，要改要先取消完成</li>
+          <li>例外（點了不會切換完成）：「每日」標籤、「延到下一天」、「›」備註按鈕、左邊拖曳排序手把（⠿）——這幾個各自有自己的動作</li>
+        </ul>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <ul>
+          <li>點列上任何地方一樣是完成切換，跟電腦操作完全相同，不用瞄準小圓框</li>
+          <li>「每日」「延到下一天」「›」備註、改名字、移除——這五個常駐小按鈕在螢幕窄於 560px 時**直接消失**，改收進一顆「⋯」按鈕，點下去彈出動作選單逐一列出</li>
+          <li>勾選圓框也拿掉了——反正整列早就是按鈕，圓框只是桌面版滑鼠精度夠時的視覺提示；抓握手把（⠿）還在，尺寸放大方便手指點</li>
+          <li>新增任務的輸入框操作相同</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="daily">
+    <h2><span class="num">02</span> 每日任務 + 連續天數</h2>
+    <p>任務列上的「每日」是一顆可以點的標籤，點一下切換開關。設成每日的任務，明天換日會自動重新出現在清單上。</p>
+    <div class="mock">
+      <div class="mock-row"><div class="mock-box"></div><div class="mock-title">澆花</div><div class="mock-tag red">每日</div><div class="mock-tag amber">🔥 5</div></div>
+    </div>
+    <p>🔥 後面的數字是連續完成天數，今天一打勾就立刻反映，不用等明天。中斷規則很直接：只要那天狀態不是「完成」就算斷（受限於本機只留 90 天歷史，超過 90 天的連續紀錄算不出來，但不會顯示錯誤的數字）。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>點一下「每日」標籤切換開關，滑鼠點得到就好。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>操作方式跟電腦相同，只是「每日」標籤收在「⋯」動作選單裡（見上一節），連續天數 🔥 的計算邏輯不變。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="swipe">
+    <h2><span class="num">03</span> 滑除移除 / 拖曳排序</h2>
+    <p><strong>滑除移除</strong>：滑鼠／觸控在任務列上往右拖過一定距離放開，就會移除這筆任務。往左拖或拖不夠遠都會彈回原位，不會誤刪。</p>
+    <div class="swipe-demo">
+      <div class="bg">移除</div>
+      <div class="front"><div class="mock-box"></div><div class="mock-title">寄報價單</div></div>
+    </div>
+    <p class="mock-note">上圖是拖到一半的狀態——繼續往右放開就會觸發移除</p>
+    <p><strong>拖曳排序</strong>：每一列最左邊的 <span class="grip">⠿</span> 是抓握手把，按住上下拖曳可以調整順序。今天清單、明天預覽、已排程都支援（已排程限制在同一天內排序，不能跨日期拖）。</p>
+    <div class="mock">
+      <div class="mock-row"><span class="grip">⠿</span><div class="mock-title">回覆合約</div></div>
+      <div class="mock-row"><span class="grip">⠿</span><div class="mock-title">寄報價單</div></div>
+    </div>
+    <p class="mock-note">移除跟排序都有 5 秒的「復原」安全網，見下方明天預覽章節說明</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>滑鼠按住往右拖過門檻放開＝移除；按住抓握手把上下拖曳＝排序。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>兩個都用同一套觸控事件（pointer events）實作，手指滑動/拖曳邏輯跟滑鼠完全相同；抓握手把的觸控熱區有特別放大，比較好按住。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tomorrow">
+    <h2><span class="num">04</span> 明天預覽</h2>
+    <p>按「延到下一天」的任務不會馬上消失，會出現在畫面下方「明天預覽」卡片——這是唯讀區塊，滑鼠移過去才浮現「完成」（提前結束它）跟「移除」（不排進明天了）兩顆按鈕。</p>
+    <div class="mock">
+      <div class="mock-row"><div class="mock-title">寄報價單</div><div class="mock-tag muted">完成</div><div class="mock-tag muted">移除</div></div>
+    </div>
+    <p class="mock-note">移除（不管是滑除還是按這裡的「移除」）都不是立刻生效——原地會換成「已移除「XXX」＋復原」，5 秒內可以按復原救回來，5 秒到了才真的刪掉。</p>
+    <p class="muted">預設只列「已延期」的項目，每日任務不算延期搬過去的東西所以不會出現在這裡；「⋯ 更多」下拉裡有一顆開關「顯示明日每日任務」，打開後這張卡片會額外把目前所有每日任務也列出來（標「每日」標籤區隔），單純讓你一次看到明天會出現的全部項目，不影響換日邏輯本身。這些額外列出來的每日任務有兩顆按鈕，語意不同、分開操作：<strong>「明天不出現」</strong>只跳過明天這一次（標籤變「每日・明天不出現」、按鈕變「復原」可以按回來，之後照常每天出現）；<strong>「移除」</strong>是永久關掉這個任務的「每日」屬性（跟主畫面點「每日」標籤切換開關是同一件事），任務本身不會被刪掉，之後隨時可以從主畫面重新打開每日。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>滑鼠移到列上才浮現「完成」「移除」兩顆按鈕（靠 CSS <code>:hover</code> 顯示）。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>這兩顆按鈕改成手機寬度下常駐顯示（不用先觸發才看得到），直接點就有效。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="schedule">
+    <h2><span class="num">05</span> 已排程</h2>
+    <p>新增任務時點輸入框旁邊的 📅，選一個未來日期，這筆任務不會出現在今天，而是進入「已排程」卡片，換日換到那一天才會自動變成正式待辦。</p>
+    <div class="mock">
+      <div class="mock-row"><div class="mock-tag muted">08-22 週六</div><div class="mock-title">寄報價單</div></div>
+      <div class="mock-row"><div class="mock-tag muted">08-25 週二</div><div class="mock-title">續約提醒</div></div>
+    </div>
+    <p class="muted">日期選擇器選不到過去的日期。已排程的任務不能設為每日——那個切換要等任務真的出現在某一天才有意義。每一列滑鼠移到上面才浮現「取消」按鈕，可以直接刪掉整個排程。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>點 📅 叫出瀏覽器原生日期選擇器；「取消」按鈕靠 <code>:hover</code> 顯示。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>日期選擇器操作方式相同——是瀏覽器原生元件（<code>&lt;input type="date"&gt;</code>），手機上其實更好按；「取消」按鈕改成常駐顯示，不用先觸發。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="templates">
+    <h2><span class="num">06</span> 任務範本（子任務）</h2>
+    <p>「今天」卡片左邊貼著的「📦 範本」按鈕可以新增一組「範本」——名稱 + 一行一個子任務。套用範本會產生**一個**任務，底下帶著子任務，可以展開個別打勾：</p>
+    <div class="mock">
+      <div class="mock-row"><span class="grip">⠿</span><span style="color:var(--muted)">▾</span><div class="mock-title">出差模式</div><div class="mock-tag muted">2 / 3</div></div>
+      <div class="mock-row" style="padding-left:22px"><div class="mock-box on"></div><div class="mock-title off">護照</div></div>
+      <div class="mock-row" style="padding-left:22px"><div class="mock-box on"></div><div class="mock-title off">機票</div></div>
+      <div class="mock-row" style="padding-left:22px"><div class="mock-box"></div><div class="mock-title">轉接頭</div></div>
+    </div>
+    <p>點這一列任何地方（除了每日/延期/備註/拖曳手把）= 展開／收合子任務，不用特別瞄準那個小箭頭。這個外層任務**沒有**自己的完成勾選框——子任務全部打勾，外層才自動變成完成；取消任何一個子任務，外層自動變回未完成。延期、滑除、拖曳排序、每日切換都是對整個任務（含子任務）一起生效；展開狀態下滑除移除會暫時關閉，收合才能滑除。</p>
+    <p class="muted">範本清單裡每個範本旁邊有「套用」「編輯」「刪除」——編輯會把名稱跟子任務內容抓回下面表單直接改，改完按「更新範本」；刪除或編輯範本都不影響已經套用出去的任務（那些任務的子任務清單是套用當下複製的一份，跟原本的範本已經沒關係了）。表單裡的子任務項目本身也能像一般任務一樣操作：拖曳手把排序、雙擊改名字、按「移除」單獨刪掉一項、輸入框+＋新增。子任務清單一旦套用出去變成正式任務後就固定了，不能事後再加新的子任務進去；也不能個別延期單一子任務。</p>
+    <p class="muted">子任務至少要保留一個——移除按鈕在只剩最後一個子任務時會被擋下來（跳提示），不會讓任務被清空到變成沒有子任務清單的樣子；真的不需要整個任務了，用整列的「移除」（滑除或「⋯」選單）直接刪掉整個任務。任務如果設成「每日」，跟一般任務一樣連續完成天數到有紀錄時會顯示 🔥 徽章。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>展開後點子任務列任何地方（除了移除按鈕、標題本身）＝切換完成/未完成，整列都是按鈕，不用瞄準那個小圓框；雙擊子任務文字改名字；滑鼠移到列上會浮現「移除」按鈕；清單最下面輸入框可以新增子任務（新增後如果原本外層是完成狀態會變回未完成）。子任務不能拖曳排序——套用出來的正式任務刻意不提供這個，只有範本編輯表單裡整理草稿子任務清單時才能拖。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>整列點擊切換完成的操作跟電腦完全相同；唯一差異是勾選圓框直接藏起來（整列已經是按鈕，不需要圓框當視覺提示）。雙擊改名字在手機下停用，改名字跟移除都收進子任務列自己的「⋯」按鈕（點一下彈出選單，跟頂層任務的「⋯」是同一套彈窗），不用瞄準小按鈕或雙擊。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="detail">
+    <h2><span class="num">07</span> 備註側欄</h2>
+    <p>任務列最右邊的「›」點下去，從畫面右側滑出備註欄，可以寫任務標題放不下的補充資訊。輸入框會隨內容自動長高，打字會自動存檔（不用手動按儲存）。</p>
+    <p class="muted">如果任務已經有備註內容，「›」會變成強調色，一眼就看得出哪些任務有額外資訊。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>點「›」按鈕觸發。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>操作方式相同，只是「›」收在「⋯」動作選單裡（「備註」這個選項），不是常駐在列上。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="search">
+    <h2><span class="num">08</span> 搜尋</h2>
+    <p>「今天」卡片左邊貼著的「🔍 搜尋」按鈕，或按 <span class="kbd">/</span>，可以搜今天清單、明天預覽、已排程的標題跟備註，也會搜本機 90 天內的歷史紀錄。點結果直接跳過去。</p>
+    <p class="muted">超過 90 天的舊紀錄如果符合關鍵字，會列出來但標「僅供參考」——點了只會告知資料還在完整備份裡，沒辦法直接跳過去看（本機瀏覽本來就只留 90 天）。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>點「🔍 搜尋」按鈕，或按 <span class="kbd">/</span> 快捷鍵。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>按鈕還在（貼在卡片正上方，變成只剩圖示的圓角按鈕），點了操作完全相同；<span class="kbd">/</span> 快捷鍵沒有意義就不能用了——觸控裝置通常沒有實體鍵盤。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="copy">
+    <h2><span class="num">09</span> 複製清單</h2>
+    <p>工具列右上「⋯ 更多」下拉裡的「複製清單」，或按 <span class="kbd">⌘/Ctrl</span> + <span class="kbd">K</span>，把今天的清單（含完成狀態）、明天預覽、已排程整理成一段純文字複製到剪貼簿，方便貼到 LINE、email 等地方。</p>
+    <p class="muted">上方橫向工具列：自動同步狀態、⌨️ 快捷鍵、「⋯ 更多」（複製清單/匯入 CSV/匯出/匯入備份收在這裡）。🔍 搜尋、📦 範本則貼在「今天」卡片左邊，跟卡片同高——這兩個常用，值得跟卡片本身綁在一起，視窗太窄時會自動改排到卡片上方。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>「⋯ 更多」下拉裡點「複製清單」，或按 <span class="kbd">⌘/Ctrl</span> + <span class="kbd">K</span>。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p class="dual-unsupported">尚未支援——螢幕窄於 560px 時最上面整條工具列（含「⋯ 更多」跟裡面的「複製清單」「匯入 CSV」「顯示明日每日任務」「清空資料」）都會隱藏，目前沒有搬到別的地方，暫時只能在桌面用。匯出／匯入備份不受影響，見下一節「備份 / 同步」。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="history">
+    <h2><span class="num">10</span> 歷史瀏覽</h2>
+    <p>日期兩側的 ‹ › 箭頭可以往回翻看過去的日子，唯讀，不能修改。本機最多能翻到 90 天前（再往前箭頭會 disable），但完整歷史其實一直都存在（見下方備份章節）。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>點 ‹ › 箭頭。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>操作方式相同，箭頭是一般按鈕，觸控直接點就有效。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="backup">
+    <h2><span class="num">11</span> 備份 / 同步</h2>
+    <ul>
+      <li><strong>匯出備份</strong>：下載一份完整 JSON（不受 90 天限制），可以留著或手動搬到別的地方——任務、歷史、**範本**都包含在內；用舊版匯出的備份檔案沒有範本欄位，匯入時不會把現有範本清空，維持原樣</li>
+      <li><strong>匯入備份</strong>：讀一個 JSON 檔案整包覆蓋現有資料，匯入前一定會跳確認</li>
+      <li><strong>自動同步本機檔案</strong>：只有 Chrome / Edge 支援，分兩顆按鈕——「🔗 連結同步檔案」是主要入口，用開啟檔案的方式選一個**已經存在**的 json 檔（例如雲端硬碟同步資料夾裡、另一台裝置已經在用的那個），語意上是「接上」不是「另存新檔」；「建立新同步檔案」是次要入口，只在真的還沒有同步檔案、要從零開始建一個的時候才用。**如果選到的檔案裡已經有資料**，兩個入口都會先跳一個三選一的小視窗（標題「同步檔案跟這裡都有資料」）：「確定」＝從檔案抓到這裡（覆蓋這台裝置的資料）、「覆蓋」＝用這台裝置的資料覆蓋檔案、「取消」＝整個同步都不設定。開機時也會讀一次同步檔案，如果內容跟這台裝置不一樣（代表別的裝置寫過），會跳出同一套三選一按鈕、但標題換成「同步資料有外部改變」、說明文字明講「發現「檔名」外部有改動」，跟連結新檔案那次講清楚是不同情境：確定＝載入檔案版本、覆蓋＝立刻用本機資料蓋過去、取消＝先不處理（維持本機，之後正常操作存檔時還是會自然覆蓋掉檔案）。**除了開機那一次，切回這個分頁/視窗時也會再檢查一次**（例如切去別的視窗、另一台裝置改了同步檔案，再切回來就會發現），不是常駐計時器一直輪詢，只有真的切回來的當下才檢查，一樣是「同步資料有外部改變」那套三選一</li>
+      <li><strong>🗑️ 清空資料</strong>（「⋯ 更多」下拉最下面，紅字）：把所有任務資料整包重置回第一次使用的空狀態（含 90 天內的近期歷史跟不受限的完整封存都清掉），按下去會先跳確認、提醒先匯出備份。如果當下有連結自動同步檔案，會**順便解除連結**（本機的 json 檔案本身不會被刪，只是不再自動寫入它）——不解除的話，清空後下一次存檔會把「清空後的空資料」寫回同步檔案，等於連同步檔案也一起清光</li>
+      <li><strong>重新授權</strong>：同步授權過期或跨瀏覽器工作階段失效時，同步按鈕會變成「重新授權：檔名」，點一下重新同意授權。授權成功後一樣會跳三選一：確定＝載入檔案版本、覆蓋＝立刻用本機資料蓋過去、**取消＝取消這次重新授權**（維持「需要重新授權」的狀態，不寫入、不改按鈕，等於這次點擊沒發生過），不是像以前那樣重新授權完直接無條件覆蓋掉檔案內容，也不是套用連結新檔案時「取消＝不設定同步」那種語意——同一個彈窗，三個情境（連結新檔案／開機比對／重新授權）只有「取消」按鈕的說明文字跟著情境換，「確定」「覆蓋」語意處處一樣</li>
+    </ul>
+    <p class="muted">這不是即時雙向同步，是「單向寫入 + 開機比對提醒」，兩台裝置真的同時改同一天才會需要手動選一份。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>匯出/匯入在「⋯ 更多」下拉裡；自動同步（連結/建立同步檔案）用 Chrome / Edge 的 File System Access API。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p>匯出/匯入還在，搬到卡片正上方那排按鈕裡（跟🔍搜尋、📦範本並排），點了會叫出手機原生的檔案分享/選檔介面。</p>
+        <p class="dual-unsupported">自動同步尚未支援——File System Access API 目前手機瀏覽器（含 Chrome for Android）都不支援，沒有替代方案，只能靠匯出/匯入 JSON 手動搬資料。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="shortcuts">
+    <h2><span class="num">12</span> 鍵盤快捷鍵</h2>
+    <div class="kbd-row"><span class="kbd">N</span><span>新增任務（僅限「今天」）</span></div>
+    <div class="kbd-row"><span class="kbd">←</span><span class="kbd">→</span><span>切換日期</span></div>
+    <div class="kbd-row"><span class="kbd">⌘/Ctrl</span><span class="kbd">K</span><span>複製今天清單</span></div>
+    <div class="kbd-row"><span class="kbd">/</span><span>打開搜尋</span></div>
+    <div class="kbd-row"><span class="kbd">H</span><span>打開快速說明（跟「⋯ 更多」裡的「💡 快速說明」一樣）</span></div>
+    <div class="kbd-row"><span class="kbd">Esc</span><span>關閉目前開著的側欄／彈窗</span></div>
+    <div class="kbd-row"><span class="kbd">?</span><span>打開／關閉快捷鍵說明（工具內建）</span></div>
+    <p class="muted">打字中（游標在輸入框或文字框裡）時，除了 <code>?</code>，其他快捷鍵都不會生效。</p>
+    <div class="dual">
+      <div class="dual-col">
+        <div class="dual-label">🖥️ 電腦</div>
+        <p>上面整組鍵盤快捷鍵都能用。</p>
+      </div>
+      <div class="dual-col">
+        <div class="dual-label">📱 手機</div>
+        <p class="dual-unsupported">尚未支援——觸控裝置通常沒有實體鍵盤，這整組快捷鍵在手機上用不到，對應功能請改用畫面上的按鈕（多半收在「⋯」動作選單或「⋯ 更多」下拉裡）。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="limits">
+    <h2><span class="num">13</span> 已知限制</h2>
+    <div class="limits">
+      <div class="limit-item"><span class="mark">·</span>資料存在瀏覽器 <code>localStorage</code> + <code>IndexedDB</code>，換瀏覽器或換電腦不會自動有資料，要靠匯出/自動同步搬過去。</div>
+      <div class="limit-item"><span class="mark">·</span>任務管理本身（新增/完成/延期/範本/子任務/拖曳排序）手機瀏覽器都能正常操作，每節底下都有「🖥️ 電腦 / 📱 手機」對照說明；但**自動同步 / 開啟本機檔案**用的 File System Access API、鍵盤快捷鍵、複製清單/CSV 匯入，這幾個手機上目前都不支援（明天預覽/已排程原本靠 hover 才顯示的按鈕已經改成手機常駐顯示；子任務的改名字/移除則是收進子任務自己的「⋯」選單，都不在此限）。</div>
+      <div class="limit-item"><span class="mark">·</span>自動同步是單向寫入 + 開機比對，不是即時雙向同步；沒有欄位級的合併，衝突時是整包二選一。</div>
+      <div class="limit-item"><span class="mark">·</span>連續天數、搜尋歷史都是照本機 90 天內的紀錄算的，更久以前的資料只在完整備份裡，程式本身看不到。</div>
+      <div class="limit-item"><span class="mark">·</span>範本套用出去之後，子任務可以改名字/新增/移除，但**不能拖曳排序**（草稿階段的範本編輯表單才能排序），也不能個別延期單一子任務。</div>
+      <div class="limit-item"><span class="mark">·</span>CSV 匯入是通用欄位偵測（找像「標題」「日期」的欄名），不是針對特定工具寫的專用解析器，優先級/標籤/備註等欄位不會保留。</div>
+      <div class="limit-item"><span class="mark">·</span>已完成的任務不能改名字、不能被滑除移除——要改要先取消完成。</div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
