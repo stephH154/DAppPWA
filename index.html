@@ -734,6 +734,7 @@
         <button type="button" class="dropdown-item tool-btn" id="exportBtn">匯出備份</button>
         <button type="button" class="dropdown-item tool-btn" id="importBtn">匯入備份</button>
         <button type="button" class="dropdown-item" id="showDailyInTomorrowBtn">顯示明日每日任務</button>
+        <button type="button" class="dropdown-item" id="cloudSyncMenuBtn">☁️ 雲端同步</button>
         <div class="dropdown-divider"></div>
         <button type="button" class="dropdown-item danger" id="clearDataBtn">🗑️ 清空資料</button>
       </div>
@@ -902,6 +903,21 @@
   </div>
 </div>
 
+<div class="detail-overlay" id="cloudSyncOverlay"></div>
+<div class="shortcuts-modal" id="cloudSyncModal">
+  <div class="detail-head">
+    <div class="shortcuts-title">☁️ 雲端同步</div>
+    <button class="round-btn" id="cloudSyncClose">×</button>
+  </div>
+  <div class="detail-meta" style="margin-top:6px">貼上部署好的 Google Apps Script 網址跟自訂密鑰（設定教學見 daily-task-calendar-guide.html）。跟「本機同步檔案」是二選一，設定這裡會自動解除本機檔案連結。</div>
+  <input type="text" id="cloudSyncUrlInput" class="search-input" placeholder="Web App 網址（https://script.google.com/.../exec）" style="margin-top:14px">
+  <input type="text" id="cloudSyncTokenInput" class="search-input" placeholder="密鑰（跟 Apps Script 裡的 TOKEN 要一樣）">
+  <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+    <button type="button" class="choice-btn primary" id="cloudSyncSaveBtn">儲存並連結</button>
+    <button type="button" class="choice-btn danger" id="cloudSyncDisconnectBtn" style="display:none">解除雲端同步</button>
+  </div>
+</div>
+
 <script>
 (function () {
   var KEY_DEFS = 'dtc_taskDefs';
@@ -910,6 +926,8 @@
   var KEY_TEMPLATES = 'dtc_templates';
   var KEY_SHOW_DAILY_TOMORROW = 'dtc_showDailyInTomorrow';
   var KEY_ONBOARDING_SEEN = 'dtc_onboardingSeen';
+  var KEY_CLOUD_SYNC_URL = 'dtc_cloudSyncUrl';
+  var KEY_CLOUD_SYNC_TOKEN = 'dtc_cloudSyncToken';
   // 匯出格式的版號——欄位是陸續加上去的（templates、skipDailyTomorrow…），之前都是用
   // 「這個欄位存不存在」土法煉鋼判斷要不要相容處理，加個明確版號之後，之後格式再變，
   // 可以直接看 schemaVersion 分支，不用每個欄位各自猜「這是舊格式還是使用者手動改壞的」
@@ -1044,7 +1062,7 @@
     saveJSON(KEY_DEFS, taskDefs);
     saveJSON(KEY_DAY, dayState);
     saveJSON(KEY_HIST, dayHistory);
-    writeToLinkedFile();
+    pushToActiveSync();
   }
 
   function checkRollover() {
@@ -1093,6 +1111,14 @@
   var syncConflictImportBtn = document.getElementById('syncConflictImport');
   var syncConflictOverwriteBtn = document.getElementById('syncConflictOverwrite');
   var syncConflictCancelBtn = document.getElementById('syncConflictCancel');
+  var cloudSyncMenuBtn = document.getElementById('cloudSyncMenuBtn');
+  var cloudSyncOverlay = document.getElementById('cloudSyncOverlay');
+  var cloudSyncModal = document.getElementById('cloudSyncModal');
+  var cloudSyncClose = document.getElementById('cloudSyncClose');
+  var cloudSyncUrlInput = document.getElementById('cloudSyncUrlInput');
+  var cloudSyncTokenInput = document.getElementById('cloudSyncTokenInput');
+  var cloudSyncSaveBtn = document.getElementById('cloudSyncSaveBtn');
+  var cloudSyncDisconnectBtn = document.getElementById('cloudSyncDisconnectBtn');
   var taskSheetOverlay = document.getElementById('taskSheetOverlay');
   var taskSheetModal = document.getElementById('taskSheetModal');
   var taskSheetTitle = document.getElementById('taskSheetTitle');
@@ -1365,12 +1391,8 @@
     localStorage.removeItem(KEY_SHOW_DAILY_TOMORROW);
     localStorage.removeItem(KEY_ONBOARDING_SEEN);
     updateShowDailyBtn();
-    if (fileHandle) {
-      fileHandle = null;
-      needsReauth = false; // updateSyncBtn() 會先看 needsReauth 再讀 fileHandle.name，兩個要一起清掉
-      idbDel('handles', 'linked');
-      updateSyncBtn();
-    }
+    disconnectFileSyncSilently();
+    disconnectCloudSyncSilently();
     if ('indexedDB' in window) {
       idbClear('history').catch(function () {});
     }
@@ -1415,6 +1437,12 @@
   var FS_SUPPORTED = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window && 'indexedDB' in window;
   var fileHandle = null;
   var needsReauth = false;
+  // 雲端同步（Google Apps Script Web App）——跟本機同步檔案是「兩選一」的關係，同一時間
+  // 只會有一種在生效（見 activeSyncTransport()），不會兩邊同時寫。手機瀏覽器不支援
+  // File System Access API，但 fetch() 到一個網址不需要任何特殊瀏覽器能力，這條路線
+  // 是唯一手機也能用的自動同步方式。
+  var cloudSyncUrl = loadJSON(KEY_CLOUD_SYNC_URL, '');
+  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
 
   function idbOpen() {
     return new Promise(function (resolve, reject) {
@@ -1499,8 +1527,8 @@
   }
 
   function writeToLinkedFile() {
-    if (!fileHandle || needsReauth) return;
-    fileHandle.queryPermission({ mode: 'readwrite' }).then(function (perm) {
+    if (!fileHandle || needsReauth) return Promise.resolve();
+    return fileHandle.queryPermission({ mode: 'readwrite' }).then(function (perm) {
       if (perm !== 'granted') return;
       return buildExportPayload().then(function (payload) {
         return fileHandle.createWritable().then(function (writable) {
@@ -1510,6 +1538,50 @@
         });
       });
     }).catch(function () { /* 使用者可能移除或改了檔案位置，下次點按鈕會重新授權 */ });
+  }
+
+  /* ---------- 雲端同步（Google Apps Script Web App，手機也能用） ---------- */
+  //
+  // 後端是使用者自己部署的一支 Apps Script（doGet 讀、doPost 寫，程式碼跟部署說明另外
+  // 提供），這裡只是一個 fetch() 到那個網址的薄薄一層。POST body 故意用 text/plain
+  // 而不是 application/json——Apps Script Web App 不會處理瀏覽器發的 CORS preflight
+  // （OPTIONS 請求），只要 Content-Type 落在「simple request」範圍內就不會觸發 preflight，
+  // 這是這個做法唯一需要小心的地方，其餘就是普通的 fetch。token 放進 JSON body 本身，
+  // 不是放 header——放 header 一樣會觸發 preflight，等於白做。
+  function cloudSyncFetchText() {
+    if (!cloudSyncUrl || !cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
+    var url = cloudSyncUrl + (cloudSyncUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken);
+    return fetch(url).then(function (res) { return res.text(); });
+  }
+
+  function cloudSyncPushRemote() {
+    if (!cloudSyncUrl || !cloudSyncToken) return Promise.resolve();
+    return buildExportPayload().then(function (payload) {
+      return fetch(cloudSyncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ token: cloudSyncToken, payload: payload })
+      });
+    }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
+  }
+
+  // 目前生效中的同步方式——本機檔案／雲端兩者互斥，同一時間只會有一個算數（見設定雲端同步
+  // 時會先解除本機檔案連結、反之亦然）。resolveSyncDiff()／pushToActiveSync() 都透過這個
+  // 介面操作，不用各自分別判断要走哪一條路，之後如果還要加第三種同步方式，也只要多實作
+  // 這三個方法就好，不用動到比對/解決衝突的邏輯本身。
+  function activeSyncTransport() {
+    if (fileHandle && !needsReauth) {
+      return { label: fileHandle.name, readText: function () { return fileHandle.getFile().then(function (f) { return f.text(); }); }, write: writeToLinkedFile };
+    }
+    if (cloudSyncUrl && cloudSyncToken) {
+      return { label: '雲端同步', readText: cloudSyncFetchText, write: cloudSyncPushRemote };
+    }
+    return null;
+  }
+
+  function pushToActiveSync() {
+    var transport = activeSyncTransport();
+    return transport ? transport.write() : Promise.resolve();
   }
 
   /* 選到的可能是一個已經有資料的舊檔案（例如連結另一台裝置寫過的同步檔）——
@@ -1552,6 +1624,74 @@
     if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel');
   });
 
+  // 本機檔案／雲端同步互斥——設定其中一個就自動解除另一個，避免兩條同步管道同時生效、
+  // 「到底哪一份才是對的」變成沒人管得清楚的狀態。
+  function disconnectFileSyncSilently() {
+    if (!fileHandle) return;
+    fileHandle = null;
+    needsReauth = false;
+    idbDel('handles', 'linked');
+    updateSyncBtn();
+  }
+  function disconnectCloudSyncSilently() {
+    if (!cloudSyncUrl && !cloudSyncToken) return;
+    cloudSyncUrl = '';
+    cloudSyncToken = '';
+    localStorage.removeItem(KEY_CLOUD_SYNC_URL);
+    localStorage.removeItem(KEY_CLOUD_SYNC_TOKEN);
+    updateCloudSyncUi();
+  }
+
+  function updateCloudSyncUi() {
+    var connected = !!(cloudSyncUrl && cloudSyncToken);
+    cloudSyncMenuBtn.textContent = connected ? '☁️ 雲端同步（已連結）' : '☁️ 雲端同步';
+    cloudSyncUrlInput.value = cloudSyncUrl;
+    cloudSyncTokenInput.value = cloudSyncToken;
+    cloudSyncDisconnectBtn.style.display = connected ? 'block' : 'none';
+  }
+  function openCloudSyncModal() {
+    updateCloudSyncUi();
+    cloudSyncModal.classList.add('open');
+    cloudSyncOverlay.classList.add('open');
+  }
+  function closeCloudSyncModal() {
+    cloudSyncModal.classList.remove('open');
+    cloudSyncOverlay.classList.remove('open');
+  }
+  cloudSyncMenuBtn.addEventListener('click', openCloudSyncModal);
+  cloudSyncClose.addEventListener('click', closeCloudSyncModal);
+  cloudSyncOverlay.addEventListener('click', closeCloudSyncModal);
+
+  cloudSyncSaveBtn.addEventListener('click', function () {
+    var url = cloudSyncUrlInput.value.trim();
+    var token = cloudSyncTokenInput.value.trim();
+    if (!url || !token) {
+      alert('網址跟密鑰都要填。');
+      return;
+    }
+    disconnectFileSyncSilently();
+    cloudSyncUrl = url;
+    cloudSyncToken = token;
+    saveJSON(KEY_CLOUD_SYNC_URL, cloudSyncUrl);
+    saveJSON(KEY_CLOUD_SYNC_TOKEN, cloudSyncToken);
+    updateCloudSyncUi();
+    // 連結當下先比對一次，跟連結本機檔案同一個道理——這個網址背後可能早就有資料了
+    // （例如另一台裝置已經在用），不能無條件用這台裝置的（可能是空的）資料蓋過去
+    resolveSyncDiff('不設定雲端同步').then(function (action) {
+      if (action === 'cancel') {
+        disconnectCloudSyncSilently();
+        return;
+      }
+      if (action !== 'imported') pushToActiveSync();
+    });
+    closeCloudSyncModal();
+  });
+  cloudSyncDisconnectBtn.addEventListener('click', function () {
+    if (!confirm('要解除雲端同步嗎？（雲端上的資料不會被刪除，只是這台裝置不再自動讀寫）')) return;
+    disconnectCloudSyncSilently();
+    closeCloudSyncModal();
+  });
+
   function finishLinkingHandle(handle) {
     return handle.getFile().then(function (file) {
       return file.text();
@@ -1569,6 +1709,7 @@
         if (action === 'import') applyImportedData(existing);
         /* action === 'overwrite'：不動本機資料，直接往下走，讓 writeToLinkedFile() 把這裡的資料寫進檔案 */
 
+        disconnectCloudSyncSilently(); // 跟雲端同步互斥，連結本機檔案就自動解除雲端那邊
         fileHandle = handle;
         needsReauth = false;
         idbSet('handles', 'linked', handle);
@@ -1611,24 +1752,27 @@
     if (needsReauth) {
       fileHandle.requestPermission({ mode: 'readwrite' }).then(function (perm) {
         if (perm !== 'granted') return;
-        // 重新授權成功後，先比對一次同步檔案內容有沒有跟這台裝置不一樣（授權失效的這段
-        // 期間，這台裝置自己的變動全部沒寫進檔案，檔案很可能是舊的；也可能是別的裝置趁這
-        // 段期間寫過），有差異跳跟連結既有檔案同一套三選一確認，不再像之前那樣重新授權完
-        // 直接無條件覆蓋檔案。這裡的「取消」語意是「取消這次重新授權」——needsReauth 維持
-        // true、不寫入、按鈕文字也不變，效果上跟這次點擊沒發生過一樣（雖然瀏覽器層級的授權
-        // 其實已經生效，但下次再點「重新授權」會直接拿到已核准的權限，重新走一次這個流程）。
+        // 先把 needsReauth 設回 false 再比對——resolveSyncDiff() 內部靠 activeSyncTransport()
+        // 判斷目前生效中的同步管道，那個判斷式看的是「needsReauth 是不是 false」，如果沒有
+        // 先改，這裡的比對會被自己的舊旗標擋掉、誤判成「沒有生效中的同步管道」而整個跳過。
+        // 使用者選「取消」的話再把它改回 true——這裡的「取消」語意是「取消這次重新授權」
+        // （needsReauth 維持 true、不寫入、按鈕文字也改回去，效果上跟這次點擊沒發生過一樣，
+        // 雖然瀏覽器層級的授權其實已經生效，但下次再點「重新授權」會直接拿到已核准的權限，
+        // 重新走一次這個流程）。
+        needsReauth = false;
+        updateSyncBtn();
         resolveSyncDiff('取消這次重新授權').then(function (action) {
-          if (action === 'cancel') return;
-          needsReauth = false;
-          updateSyncBtn();
+          if (action === 'cancel') {
+            needsReauth = true;
+            updateSyncBtn();
+            return;
+          }
           if (action !== 'imported') writeToLinkedFile(); // 'imported' 的話 applyImportedData 內部已經寫過了
         });
       });
     } else if (fileHandle) {
       if (confirm('要解除自動同步嗎？（本機的 json 檔不會被刪除，只是不再自動寫入）')) {
-        fileHandle = null;
-        idbDel('handles', 'linked');
-        updateSyncBtn();
+        disconnectFileSyncSilently();
       }
     } else {
       linkExistingFile();
@@ -1643,9 +1787,9 @@
      改動 needsReauth）留給呼叫端自己處理，因為開機比對跟重新授權這兩個情境的後續動作不一樣，
      沒辦法在這裡一次概括處理。 */
   function resolveSyncDiff(cancelLabel) {
-    return fileHandle.getFile().then(function (file) {
-      return file.text();
-    }).then(function (text) {
+    var transport = activeSyncTransport();
+    if (!transport) return Promise.resolve('no-diff');
+    return transport.readText().then(function (text) {
       var remote = null;
       if (text && text.trim()) {
         try { remote = JSON.parse(text); } catch (e) { remote = null; }
@@ -1657,10 +1801,10 @@
       if (localSig === remoteSig) return 'no-diff';
 
       return askSyncConflictAction(
-        fileHandle.name,
+        transport.label,
         cancelLabel,
         '同步資料有外部改變',
-        '發現「' + fileHandle.name + '」外部有改動，內容跟這台裝置目前的資料不一樣（可能是其他使用者/裝置存取了同一個同步檔案），選一個方向：'
+        '發現「' + transport.label + '」外部有改動，內容跟這台裝置目前的資料不一樣（可能是其他使用者/裝置存取了同一個同步管道），選一個方向：'
       ).then(function (action) {
         if (action === 'cancel') return 'cancel';
         if (action === 'import') { applyImportedData(remote); return 'imported'; }
@@ -1669,13 +1813,14 @@
     }).catch(function () { return 'no-diff'; /* 讀不到就當作沒有衝突，不影響正常使用 */ });
   }
 
-  /* 開機時讀一次同步檔案：如果內容跟這台裝置目前的不一樣（代表其他裝置寫入過），
-     問使用者要不要載入。取消＝這次先不處理，維持本機資料，不強制立刻覆蓋檔案
-    （之後正常操作觸發存檔時還是會自然覆蓋掉）；覆蓋＝立刻把本機資料寫回檔案。 */
-  function checkLinkedFileForRemoteChanges() {
-    if (!fileHandle || needsReauth) return Promise.resolve();
+  /* 讀目前生效中的同步管道（本機檔案或雲端，見 activeSyncTransport()）：如果內容跟這台
+     裝置目前的不一樣（代表其他裝置/使用者寫入過），問使用者要不要載入。取消＝這次先不
+     處理，維持本機資料，不強制立刻覆蓋（之後正常操作觸發存檔時還是會自然覆蓋掉）；
+     覆蓋＝立刻把本機資料寫回去。 */
+  function checkRemoteSyncForChanges() {
+    if (!activeSyncTransport()) return Promise.resolve();
     return resolveSyncDiff('先不處理，維持本機資料').then(function (action) {
-      if (action === 'overwrite') writeToLinkedFile();
+      if (action === 'overwrite') pushToActiveSync();
     });
   }
 
@@ -1688,31 +1833,36 @@
       return handle.queryPermission({ mode: 'readwrite' }).then(function (perm) {
         needsReauth = perm !== 'granted';
         updateSyncBtn();
-        if (!needsReauth) checkLinkedFileForRemoteChanges();
+        if (!needsReauth) checkRemoteSyncForChanges();
       });
     }).catch(function () {});
-
-    // 開機檢查只在頁面剛載入那一刻跑一次，分頁開著、切去別的分頁或別的裝置寫過同步檔案，
-    // 都不會被發現。這裡補上「切回這個分頁/視窗時再檢查一次」——不用常駐計時器輪詢
-    // （跟換日邏輯故意不用背景排程是同一個「開啟時/回來時才檢查，不用一直跑」的設計哲學），
-    // 只在使用者真的切回來的當下才檢查一次，平常分頁在背景不會有任何額外動作。
-    // visibilitychange 跟 focus 兩個事件都掛，涵蓋「切分頁」「切視窗/切到別的 app 再切回來」
-    // 這幾種瀏覽器行為不完全一致的情境，用一個冷卻時間擋掉兩個事件可能前後腳重複觸發。
-    var lastSyncFocusCheckAt = 0;
-    var SYNC_FOCUS_CHECK_COOLDOWN_MS = 5000;
-    function checkSyncOnFocus() {
-      if (!fileHandle || needsReauth) return;
-      if (syncConflictModal.classList.contains('open')) return; // 已經有一個同步確認開著，不要疊第二個
-      var now = Date.now();
-      if (now - lastSyncFocusCheckAt < SYNC_FOCUS_CHECK_COOLDOWN_MS) return;
-      lastSyncFocusCheckAt = now;
-      checkLinkedFileForRemoteChanges();
-    }
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') checkSyncOnFocus();
-    });
-    window.addEventListener('focus', checkSyncOnFocus);
+  } else if (activeSyncTransport()) {
+    // 手機瀏覽器不支援 File System Access（FS_SUPPORTED 是 false），但雲端同步只是
+    // fetch()，跟這個 API 完全無關——如果已經設定過雲端同步，開機一樣要檢查一次
+    checkRemoteSyncForChanges();
   }
+
+  // 開機檢查只在頁面剛載入那一刻跑一次，分頁開著、切去別的分頁或別的裝置/使用者寫過同步
+  // 管道，都不會被發現。這裡補上「切回這個分頁/視窗時再檢查一次」——不用常駐計時器輪詢
+  // （跟換日邏輯故意不用背景排程是同一個「開啟時/回來時才檢查，不用一直跑」的設計哲學），
+  // 只在使用者真的切回來的當下才檢查一次，平常分頁在背景不會有任何額外動作。這段不放在
+  // FS_SUPPORTED 判斷式裡面——雲端同步在手機瀏覽器上也要能觸發，不能只綁定本機檔案那條路。
+  // visibilitychange 跟 focus 兩個事件都掛，涵蓋「切分頁」「切視窗/切到別的 app 再切回來」
+  // 這幾種瀏覽器行為不完全一致的情境，用一個冷卻時間擋掉兩個事件可能前後腳重複觸發。
+  var lastSyncFocusCheckAt = 0;
+  var SYNC_FOCUS_CHECK_COOLDOWN_MS = 5000;
+  function checkSyncOnFocus() {
+    if (!activeSyncTransport()) return;
+    if (syncConflictModal.classList.contains('open')) return; // 已經有一個同步確認開著，不要疊第二個
+    var now = Date.now();
+    if (now - lastSyncFocusCheckAt < SYNC_FOCUS_CHECK_COOLDOWN_MS) return;
+    lastSyncFocusCheckAt = now;
+    checkRemoteSyncForChanges();
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') checkSyncOnFocus();
+  });
+  window.addEventListener('focus', checkSyncOnFocus);
 
   /* ---------- 移除：先掛「待移除」5 秒、原地換成可復原提示，時間到才真的刪 ---------- */
   var pendingRemovals = {};
