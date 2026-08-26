@@ -111,6 +111,7 @@
   }
 
   .card {
+    position: relative;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 22px;
@@ -118,6 +119,31 @@
     padding: 20px;
     margin-bottom: 18px;
   }
+  /* 使用手冊/快速說明入口——刻意放在卡片外角、用小圓點而不是跟 🔍/📦/☁️ 同排的圖示卡片，
+     因為這是久久用一次的動作，不該跟每天都會點的功能佔一樣的視覺份量；只在手機寬度顯示
+     （見下方 @media 區塊），桌面版本來就有「更多→💡 快速說明」跟 H 鍵可以叫出同一個畫面，
+     不需要重複一顆。手機上原本完全沒有路徑能連到這個畫面（更多選單整個在手機寬度被藏起
+     來，H 鍵也沒有實體鍵盤可按），這顆是唯一入口。點下去開的是歡迎畫面（跟 quickHelpBtn/
+     H 鍵共用同一個 openWelcome()），不是直接連到 daily-task-calendar-guide.html——歡迎
+     畫面自己就有「查看完整說明」連到手冊，這裡沒必要略過那一層。位置故意用負的 top/right
+     讓它「浮」在卡片右上角外面，跟卡片本體的 ›（下一天）按鈕錯開，不會疊在一起。 */
+  .card-help-btn {
+    display: none;
+    position: absolute; top: -14px; right: -14px;
+    width: 24px; height: 24px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted);
+    font-size: 12px; font-weight: 700;
+    font-family: inherit;
+    padding: 0;
+    cursor: pointer;
+    align-items: center; justify-content: center;
+    box-shadow: var(--shadow);
+    transition: color .12s, border-color .12s;
+  }
+  .card-help-btn:hover { color: var(--ink); border-color: var(--ink); }
 
   .header { display: flex; align-items: center; justify-content: space-between; }
   .date-block { display: flex; flex-direction: column; align-items: center; flex: 1; }
@@ -684,6 +710,7 @@
     .side-btn { padding: 6px 14px; border-radius: 999px; }
     .side-toolbar .tool-btn { padding: 6px 14px; }
     #toolbar { display: none; }
+    .card-help-btn { display: flex; }
 
     /* 手機下觸控目標整體放大，抓握手把用「加內距+負外距」讓熱區變大但不佔版面 */
     .round-btn { width: 44px; height: 44px; font-size: 16px; }
@@ -755,6 +782,7 @@
       <button class="side-btn" id="templatesBtn" title="任務範本"><span class="side-btn-icon">📦</span><span class="side-btn-label">範本</span></button>
     </div>
     <div class="card">
+      <button type="button" class="card-help-btn" id="cardHelpBtn" title="快速說明">?</button>
       <div class="header">
         <button class="round-btn" id="prevBtn" title="前一天">‹</button>
         <div class="date-block">
@@ -1142,6 +1170,7 @@
   var welcomeStartBtn = document.getElementById('welcomeStartBtn');
   var welcomeGuideLink = document.getElementById('welcomeGuideLink');
   var quickHelpBtn = document.getElementById('quickHelpBtn');
+  var cardHelpBtn = document.getElementById('cardHelpBtn');
   var shortcutsOverlay = document.getElementById('shortcutsOverlay');
   var shortcutsModal = document.getElementById('shortcutsModal');
   var shortcutsClose = document.getElementById('shortcutsClose');
@@ -2152,6 +2181,7 @@
   welcomeGuideLink.addEventListener('click', closeWelcome); // 連結本身照常在新分頁開 guide.html，這裡只是順便標記「已經看過」，不擋預設行為
   welcomeOverlay.addEventListener('click', closeWelcome);
   quickHelpBtn.addEventListener('click', openWelcome); // 「更多」選單裡的入口，之後想再看一次歡迎畫面的提示可以自己叫出來，不是只有第一次用才看得到
+  cardHelpBtn.addEventListener('click', openWelcome); // 手機專用入口（見上方 .card-help-btn 的 CSS 註解），同一個歡迎畫面
   if (!onboardingSeen) openWelcome();
 
   /* ---------- 鍵盤快捷鍵 ---------- */

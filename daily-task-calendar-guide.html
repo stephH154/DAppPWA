@@ -2,6 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>使用手冊</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -50,6 +51,11 @@
   }
   nav.toc .toc-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
   nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 24px; font-size: 12.5px; line-height: 1.9; }
+  @media (max-width: 480px) {
+    body { padding: 32px 16px 60px; }
+    h1 { font-size: 24px; }
+    nav.toc ol { columns: 1; }
+  }
   nav.toc a { color: var(--ink); text-decoration: none; }
   nav.toc a:hover { color: var(--red); text-decoration: underline; }
   .intro a { color: var(--red); text-decoration: underline dotted; text-underline-offset: 3px; }
@@ -159,7 +165,7 @@
 <div class="shell">
   <p class="eyebrow">每日任務</p>
   <h1>使用手冊</h1>
-  <p class="intro">這頁整理目前這支工具的所有功能跟操作方式，附示意圖。</p>
+  <p class="intro">這頁整理目前這支工具的所有功能跟操作方式，附示意圖。手機版可以點「今天」卡片右上角的「?」叫出快速說明，裡面有連到這裡的按鈕。</p>
 
   <nav class="toc">
     <div class="toc-title">目錄</div>
@@ -177,7 +183,6 @@
       <li><a href="#backup">備份 / 同步</a></li>
       <li><a href="#pwa">安裝成 App（PWA）</a></li>
       <li><a href="#shortcuts">鍵盤快捷鍵</a></li>
-      <li><a href="#limits">已知限制</a></li>
     </ol>
   </nav>
 
@@ -451,20 +456,6 @@
         <div class="dual-label">📱 手機</div>
         <p class="dual-unsupported">尚未支援——觸控裝置通常沒有實體鍵盤，這整組快捷鍵在手機上用不到，對應功能請改用畫面上的按鈕（多半收在「⋯」動作選單或「⋯ 更多」下拉裡）。</p>
       </div>
-    </div>
-  </section>
-
-  <section id="limits">
-    <h2><span class="num">14</span> 已知限制</h2>
-    <div class="limits">
-      <div class="limit-item"><span class="mark">·</span>資料存在瀏覽器 <code>localStorage</code> + <code>IndexedDB</code>，換瀏覽器或換電腦不會自動有資料，要靠匯出/自動同步搬過去。</div>
-      <div class="limit-item"><span class="mark">·</span>「安裝成 App」只有透過已部署上線的網址開啟時才有作用，直接開本機這份 html 檔案不會出現安裝選項，其他功能不受影響。</div>
-      <div class="limit-item"><span class="mark">·</span>任務管理本身（新增/完成/延期/範本/子任務/拖曳排序）手機瀏覽器都能正常操作，每節底下都有「🖥️ 電腦 / 📱 手機」對照說明；手機上不支援的是**自動同步本機檔案**、鍵盤快捷鍵、複製清單/CSV 匯入——自動同步改用「☁️ 雲端同步」即可，見「備份 / 同步」一節。</div>
-      <div class="limit-item"><span class="mark">·</span>自動同步是單向寫入 + 開機比對，不是即時雙向同步；沒有欄位級的合併，衝突時是整包二選一。</div>
-      <div class="limit-item"><span class="mark">·</span>連續天數、搜尋歷史都是照本機 90 天內的紀錄算的，更久以前的資料只在完整備份裡，程式本身看不到。</div>
-      <div class="limit-item"><span class="mark">·</span>範本套用出去之後，子任務可以改名字/新增/移除，但**不能拖曳排序**（草稿階段的範本編輯表單才能排序），也不能個別延期單一子任務。</div>
-      <div class="limit-item"><span class="mark">·</span>CSV 匯入是通用欄位偵測（找像「標題」「日期」的欄名），不是針對特定工具寫的專用解析器，優先級/標籤/備註等欄位不會保留。</div>
-      <div class="limit-item"><span class="mark">·</span>已完成的任務不能改名字、不能被滑除移除——要改要先取消完成。</div>
     </div>
   </section>
 
