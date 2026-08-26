@@ -126,10 +126,16 @@
      來，H 鍵也沒有實體鍵盤可按），這顆是唯一入口。點下去開的是歡迎畫面（跟 quickHelpBtn/
      H 鍵共用同一個 openWelcome()），不是直接連到 daily-task-calendar-guide.html——歡迎
      畫面自己就有「查看完整說明」連到手冊，這裡沒必要略過那一層。位置故意用負的 top/right
-     讓它「浮」在卡片右上角外面，跟卡片本體的 ›（下一天）按鈕錯開，不會疊在一起。 */
+     讓它「浮」在卡片右上角外面，跟卡片本體的 ›（下一天）按鈕錯開，不會疊在一起。
+     **top/right 不能超過 -10px**：手機版 .side-toolbar 的 margin-bottom 剛好是 10px，
+     這顆按鈕是相對 .card 定位的，-10px 正好貼齊 side-toolbar 底邊那個空隙、不會真的疊
+     進 side-toolbar 的方框裡；試過改成 -14px 想多留一點跟 #nextBtn 的距離，結果多出來
+     的 4px 直接蓋到 side-toolbar 最後一顆圖示（手機上剛好是 ☁️ 雲端同步，因為
+     placeMobileToolbarItems() 把它 appendChild 到最後面）上面，看起來就像雲端同步按鈕
+     憑空消失——已經改回 -10px，之後不要再往負的方向加大這個值。 */
   .card-help-btn {
     display: none;
-    position: absolute; top: -14px; right: -14px;
+    position: absolute; top: -10px; right: -10px;
     width: 24px; height: 24px;
     border-radius: 999px;
     border: 1px solid var(--border);
@@ -1905,6 +1911,13 @@
     if (document.visibilityState === 'visible') checkSyncOnFocus();
   });
   window.addEventListener('focus', checkSyncOnFocus);
+  // 手機上裝成 PWA（standalone 模式）之後，從主畫面圖示「切回來」很多時候是作業系統把
+  // 背景凍結的分頁喚醒，不是重新載入整個頁面——這種情況下 visibilitychange／focus 在部分
+  // 行動瀏覽器上不一定會確實觸發（桌面版一般瀏覽器分頁反而很可靠，這是手機/桌面表現不一致
+  // 的根本原因）。pageshow 是瀏覽器規範裡專門處理「頁面重新顯示，包含從凍結/bfcache 喚醒」
+  // 的事件，相容性涵蓋這個情境更完整，補上同一個 checkSyncOnFocus()（本來就有冷卻時間擋
+  // 重複觸發，加這個不會變成多檢查）。
+  window.addEventListener('pageshow', checkSyncOnFocus);
 
   /* ---------- 移除：先掛「待移除」5 秒、原地換成可復原提示，時間到才真的刪 ---------- */
   var pendingRemovals = {};
