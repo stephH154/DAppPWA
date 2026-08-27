@@ -344,6 +344,11 @@
   }
   .check-dot:hover { border-color: var(--green); }
   .check-dot.checked { background: var(--green); border-color: var(--green); color: #fff; }
+  /* 歷史畫面的子任務唯讀，勾勾本身不能點——拿掉 pointer 游標跟 hover 變色，
+     不然看起來像可以點但點了完全沒反應 */
+  .check-dot.readonly { cursor: default; }
+  .check-dot.readonly:hover { border-color: var(--border); }
+  .check-dot.readonly.checked:hover { border-color: var(--green); }
 
   .item-title { flex: 1; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   .item-title.done { text-decoration: line-through; color: var(--muted); }
@@ -1027,13 +1032,21 @@
   function archiveDay(state) {
     var snapshot = { items: state.items.map(function (it) {
       var def = getDef(it.taskId);
-      return {
+      var entry = {
         taskId: it.taskId,
         title: def ? def.title : '(已刪除的任務)',
         isDaily: def ? !!def.isDaily : false,
         status: it.status,
         note: def && def.note ? def.note : ''
       };
+      // 子任務的完成狀態存在 def.subtasks 上（活的、跨天共用），rollover() 換日時會把它們
+      // 重設回 pending 給明天用——archiveDay 一定要在那個重設「之前」（見 rollover() 呼叫順序）
+      // 把當下這一份完成狀態複製一份存進歷史快照，不然歷史紀錄永遠拿不到子任務資料，回頭看
+      // 過去只能看到外層任務整體完成與否，看不到當時到底完成了哪幾項子任務。
+      if (def && def.subtasks && def.subtasks.length) {
+        entry.subtasks = def.subtasks.map(function (s) { return { title: s.title, status: s.status }; });
+      }
+      return entry;
     }) };
     dayHistory[state.date] = snapshot;
     if ('indexedDB' in window) idbSet('history', state.date, snapshot).catch(function () {});
@@ -3520,6 +3533,11 @@
     }
   }
 
+  // 歷史畫面裡「有子任務的父任務」展開狀態，跟 expandedTemplates（今天用的）分開存——
+  // 兩邊都用 taskId 當 key，同一個每日任務在今天/歷史畫面各自展開互不影響，避免看起來
+  // 像同一顆開關被兩個畫面共用。
+  var expandedHistoryItems = {};
+
   function renderHistory(dateStr) {
     tomorrowCard.style.display = 'none';
     mainList.innerHTML = '';
@@ -3536,25 +3554,83 @@
     var statusClass = { done: 'tag-done', deferred: 'tag-deferred', pending: 'tag-pending' };
 
     snapshot.items.forEach(function (it) {
+      // 只有存過子任務快照的項目才能展開（見 archiveDay()）；換版本之前留下的舊歷史紀錄
+      // 沒有這份資料，就照舊顯示成一般列，不會出現一個點了沒反應的假展開箭頭。
+      var hasSubtasks = !!(it.subtasks && it.subtasks.length);
+
       var li = document.createElement('li');
-      li.className = 'item';
+      li.className = hasSubtasks ? 'item swipe-row' : 'item';
+
+      // 沒有子任務時 row 就是 li 本身（跟原本一樣的純一列）；有子任務時借用
+      // .swipe-content 的視覺樣式（跟今天畫面展開的父任務列同一套外觀），但完全不接
+      // 任何滑除/拖曳/選單邏輯——這個畫面自始至終唯讀，只有展開/收合這一個互動。
+      var row = li;
+      if (hasSubtasks) {
+        row = document.createElement('div');
+        row.className = 'swipe-content' + (it.status === 'done' ? ' is-done' : '');
+        li.appendChild(row);
+
+        var caret = document.createElement('button');
+        caret.className = 'caret-btn';
+        caret.textContent = expandedHistoryItems[it.taskId] ? '▾' : '▸';
+        caret.title = '展開／收合子任務（唯讀，不能修改）';
+        row.appendChild(caret);
+      }
 
       var title = document.createElement('span');
       title.className = 'item-title' + (it.status === 'done' ? ' done' : '');
       title.textContent = it.title;
-      li.appendChild(title);
+      row.appendChild(title);
+
+      if (hasSubtasks) {
+        var doneCount = it.subtasks.filter(function (s) { return s.status === 'done'; }).length;
+        var progress = document.createElement('span');
+        progress.className = 'tag ' + (it.status === 'done' ? 'tag-done' : 'tag-pending');
+        progress.textContent = doneCount + ' / ' + it.subtasks.length;
+        row.appendChild(progress);
+      }
 
       if (it.isDaily) {
         var dailyTag = document.createElement('span');
         dailyTag.className = 'tag tag-daily';
         dailyTag.textContent = '每日';
-        li.appendChild(dailyTag);
+        row.appendChild(dailyTag);
       }
 
       var status = document.createElement('span');
       status.className = 'tag ' + (statusClass[it.status] || 'tag-pending');
       status.textContent = statusLabel[it.status] || it.status;
-      li.appendChild(status);
+      row.appendChild(status);
+
+      if (hasSubtasks) {
+        row.addEventListener('click', function () {
+          expandedHistoryItems[it.taskId] = !expandedHistoryItems[it.taskId];
+          render();
+        });
+
+        if (expandedHistoryItems[it.taskId]) {
+          var subList = document.createElement('div');
+          subList.className = 'subtask-list';
+          it.subtasks.forEach(function (sub) {
+            var subDone = sub.status === 'done';
+            var subRow = document.createElement('div');
+            subRow.className = 'sub-row' + (subDone ? ' is-done' : '');
+
+            var subDot = document.createElement('span');
+            subDot.className = 'check-dot readonly' + (subDone ? ' checked' : '');
+            subDot.textContent = '✓';
+            subRow.appendChild(subDot);
+
+            var subTitle = document.createElement('span');
+            subTitle.className = 'item-title' + (subDone ? ' done' : '');
+            subTitle.textContent = sub.title;
+            subRow.appendChild(subTitle);
+
+            subList.appendChild(subRow);
+          });
+          li.appendChild(subList);
+        }
+      }
 
       mainList.appendChild(li);
     });
