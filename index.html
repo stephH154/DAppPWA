@@ -1174,16 +1174,32 @@
     pushToActiveSync();
   }
 
+  // 回傳這次呼叫有沒有真的換日封存——只有真的封存過，才值得額外推播一次歷史資料上雲端
+  // （見 pushHistoryIfCloud()），沒換日的話歷史資料根本沒變，不需要多打一次網路請求。
   function checkRollover() {
     var t = todayStr();
     if (!dayState) {
       dayState = { date: t, items: [] };
+      return false;
     } else if (dayState.date !== t) {
       rollover(dayState, t);
+      return true;
     }
+    return false;
   }
 
-  checkRollover();
+  // fileHandle／needsReauth／cloudSyncToken 提前到這裡宣告（本來整組宣告在後面
+  // 「自動同步本機檔案」那個區塊裡，見下面 FS_SUPPORTED 旁邊的註解）——開機這一刻如果
+  // 剛好跨過午夜、換日封存了新的一天，下面要呼叫 pushHistoryIfCloud() 推播歷史資料，
+  // 那個函式靠 activeSyncTransport() 判斷「現在有沒有生效中的同步管道」，讀的就是這三個
+  // 變數。如果照舊放在後面才宣告，這個時間點讀到的這三個變數都還是 undefined（var 宣告
+  // 本身會被提升，但賦值敘述還沒執行到），會被誤判成「沒有同步管道」，換日封存的歷史
+  // 資料在「開機時剛好跨過午夜」這個最常見的觸發情境下就永遠不會被推播上雲端。
+  var fileHandle = null;
+  var needsReauth = false;
+  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
+
+  if (checkRollover()) pushHistoryIfCloud();
   persistAll();
 
   var currentView = dayState.date;
@@ -1415,21 +1431,38 @@
 
   /* dayHistory（記憶體/localStorage）只留 90 天；匯出/同步要拿完整版，
      完整版另外存在 IndexedDB 的 history store 裡，不受 90 天裁切影響 */
-  function buildExportPayload() {
-    var base = { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), taskDefs: taskDefs, dayState: dayState, templates: templates };
-    if (!('indexedDB' in window)) {
-      base.dayHistory = dayHistory;
-      return Promise.resolve(base);
-    }
+  function mergedHistoryPromise() {
+    if (!('indexedDB' in window)) return Promise.resolve(dayHistory);
     return idbGetAll('history').then(function (archive) {
       var merged = {};
       Object.keys(archive).forEach(function (k) { merged[k] = archive[k]; });
       Object.keys(dayHistory).forEach(function (k) { merged[k] = dayHistory[k]; });
+      return merged;
+    }).catch(function () { return dayHistory; });
+  }
+
+  function buildExportPayload() {
+    var base = { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), taskDefs: taskDefs, dayState: dayState, templates: templates };
+    return mergedHistoryPromise().then(function (merged) {
       base.dayHistory = merged;
       return base;
-    }).catch(function () {
-      base.dayHistory = dayHistory;
-      return base;
+    });
+  }
+
+  /* 雲端同步「常態」推播用的精簡版——只有當天/明日排程/範本這些常常變動的資料，
+     不含歷史封存。歷史資料只有換日封存新的一天之後才會另外推播一次（見
+     pushHistoryIfCloud()），不需要每次打勾/新增任務都跟著整包重送：歷史資料
+     封存之後就不會再變動，卻會隨著使用時間越滾越大，跟著熱路徑（persistAll()
+     每次異動都會觸發）一起重送是純粹的浪費，用量越大浪費越明顯。這個函式只給
+     雲端同步用——本機檔案同步（File System Access API）沒有網路來回延遲，
+     沒有這個問題，仍然用 buildExportPayload() 整包寫。 */
+  function buildCurrentSyncPayload() {
+    return { schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), taskDefs: taskDefs, dayState: dayState, templates: templates };
+  }
+
+  function buildCloudHistoryPayload() {
+    return mergedHistoryPromise().then(function (merged) {
+      return { schemaVersion: SCHEMA_VERSION, dayHistory: merged };
     });
   }
 
@@ -1474,7 +1507,7 @@
         idbSet('history', dateKey, dayHistory[dateKey]).catch(function () {});
       });
     }
-    checkRollover();
+    if (checkRollover()) pushHistoryIfCloud();
     persistAll();
     currentView = dayState.date;
     scheduleDate.min = dayState.date;
@@ -1547,8 +1580,8 @@
   /* ---------- 自動同步本機檔案（File System Access API，僅 Chromium 系瀏覽器） ---------- */
 
   var FS_SUPPORTED = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window && 'indexedDB' in window;
-  var fileHandle = null;
-  var needsReauth = false;
+  // fileHandle／needsReauth／cloudSyncToken 已經提前到檔案開頭（換日封存那段）宣告，
+  // 理由見那邊的註解——這裡不再重複宣告，避免同一個變數兩個地方各宣告一次容易搞混。
   // 雲端同步（Google Apps Script Web App）——跟本機同步檔案是「兩選一」的關係，同一時間
   // 只會有一種在生效（見 activeSyncTransport()），不會兩邊同時寫。手機瀏覽器不支援
   // File System Access API，但 fetch() 到一個網址不需要任何特殊瀏覽器能力，這條路線
@@ -1559,7 +1592,6 @@
   // 又長又難記的 script.google.com 網址複製貼上。部署好 Apps Script 之後把下面這行換成
   // 實際拿到的網址（daily-task-cloud-sync-apps-script.txt 裡的部署步驟第 7 步）。
   var CLOUD_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec';
-  var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
   var lastKnownSyncModified = loadJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, null);
   function saveLastKnownSyncModified(v) { lastKnownSyncModified = v; saveJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, v); }
   // 雲端同步這次檢查/推播是不是失敗（逾時、離線、後端錯誤）——只在記憶體，重新整理頁面
@@ -1695,17 +1727,22 @@
     });
   }
 
+  // &part=current 是明講「我要的是當天資料，不是歷史封存」——後端沒帶 &part= 也是
+  // 預設 current（見 apps-script 那份程式碼），這裡還是明寫出來，不靠預設值，之後
+  // 回頭看這行才不用想「沒寫的話後端到底當哪一種」。
   function cloudSyncFetchText() {
     if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
-    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken);
+    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&part=current';
     return cloudFetch(url).then(function (res) { return res.text(); });
   }
 
-  // 輕量版檢查——只問「這個 token 對應的檔案最後修改時間是多少」，後端不讀檔案內容
-  // （見 apps-script 那份程式碼的 doGet &meta=1 分支），回應很小、很快。
+  // 輕量版檢查——只問「這個 token 對應的『當天資料』檔案最後修改時間是多少」，後端不讀
+  // 檔案內容（見 apps-script 那份程式碼的 doGet &meta=1 分支），回應很小、很快。刻意只問
+  // current 這個檔案，不管歷史檔案有沒有變過——classifySyncDiff() 從來不比對 dayHistory，
+  // 歷史封存改變不需要觸發鎖畫面+完整比對那一整套流程。
   function cloudSyncFetchMeta() {
     if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
-    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&meta=1';
+    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&meta=1&part=current';
     return cloudFetch(url).then(function (res) { return res.text(); }).then(function (text) {
       var data = JSON.parse(text);
       if (typeof data.lastModified !== 'number') throw new Error('bad-meta');
@@ -1713,22 +1750,44 @@
     });
   }
 
+  // 只有使用者真的選「匯入」時才會呼叫一次（見 resolveSyncDiff()）——平常的差異比對／
+  // 熱路徑推播都不需要歷史資料，見 classifySyncDiff() 從來不比對 dayHistory。
+  function cloudSyncFetchHistoryText() {
+    if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
+    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&part=history';
+    return cloudFetch(url).then(function (res) { return res.text(); });
+  }
+
   function cloudSyncPushRemote() {
     if (!cloudSyncToken) return Promise.resolve();
-    return buildExportPayload().then(function (payload) {
+    var payload = buildCurrentSyncPayload();
+    return cloudFetch(CLOUD_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: cloudSyncToken, part: 'current', payload: payload })
+    }).then(function (res) { return res.text(); }).then(function (text) {
+      // 後端這次寫入完成後的 Drive 檔案時間戳直接跟著回應回來，順手記下來當作「輕量版
+      // 檢查」下次比對的基準，不用另外再多打一次 &meta=1 才知道剛剛寫進去之後的時間。
+      try {
+        var data = JSON.parse(text);
+        if (typeof data.lastModified === 'number') saveLastKnownSyncModified(data.lastModified);
+      } catch (e) { /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
+    }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
+  }
+
+  // 只有換日封存新的一天之後才會呼叫（見 pushHistoryIfCloud()），不是每次編輯都推播——
+  // 歷史資料一旦封存就不會再變動，不需要跟當天資料一樣即時同步，一天一次已經足夠。
+  // 失敗（離線/逾時）直接放棄、不重試——跟 cloudSyncPushRemote() 同一套哲學：下次換日
+  // 還有機會再推一次，不需要為了「這一次一定成功」在使用者完全沒感覺的背景動作上花力氣。
+  function cloudSyncPushHistoryRemote() {
+    if (!cloudSyncToken) return Promise.resolve();
+    return buildCloudHistoryPayload().then(function (payload) {
       return cloudFetch(CLOUD_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ token: cloudSyncToken, payload: payload })
-      }).then(function (res) { return res.text(); }).then(function (text) {
-        // 後端這次寫入完成後的 Drive 檔案時間戳直接跟著回應回來，順手記下來當作「輕量版
-        // 檢查」下次比對的基準，不用另外再多打一次 &meta=1 才知道剛剛寫進去之後的時間。
-        try {
-          var data = JSON.parse(text);
-          if (typeof data.lastModified === 'number') saveLastKnownSyncModified(data.lastModified);
-        } catch (e) { /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
+        body: JSON.stringify({ token: cloudSyncToken, part: 'history', payload: payload })
       });
-    }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
+    }).catch(function () { /* 背景任務，失敗就算了，下次換日再試一次 */ });
   }
 
   // 目前生效中的同步方式——本機檔案／雲端兩者互斥，同一時間只會有一個算數（見設定雲端同步
@@ -1749,7 +1808,18 @@
       };
     }
     if (cloudSyncToken) {
-      return { label: '雲端同步', readText: cloudSyncFetchText, readMeta: cloudSyncFetchMeta, write: cloudSyncPushRemote, isCloud: true };
+      // readHistoryText／pushHistory 只有雲端這條路才有——本機檔案同步一次寫入就是
+      // 整包（見 writeToLinkedFile／buildExportPayload），沒有「當天/歷史分開」這回事，
+      // resolveSyncDiff() 靠這兩個欄位存不存在判斷要不要多做一步歷史相關的動作。
+      return {
+        label: '雲端同步',
+        readText: cloudSyncFetchText,
+        readMeta: cloudSyncFetchMeta,
+        write: cloudSyncPushRemote,
+        isCloud: true,
+        readHistoryText: cloudSyncFetchHistoryText,
+        pushHistory: cloudSyncPushHistoryRemote
+      };
     }
     return null;
   }
@@ -1757,6 +1827,13 @@
   function pushToActiveSync() {
     var transport = activeSyncTransport();
     return transport ? transport.write() : Promise.resolve();
+  }
+
+  // 換日封存新的一天之後呼叫——只有雲端同步生效中才有意義（本機檔案同步整包寫，
+  // 沒有分開的歷史檔案）。失敗直接吞掉，跟其他背景同步動作一樣不影響正常使用。
+  function pushHistoryIfCloud() {
+    var transport = activeSyncTransport();
+    if (transport && transport.isCloud && transport.pushHistory) transport.pushHistory();
   }
 
   /* 選到的可能是一個已經有資料的舊檔案（例如連結另一台裝置寫過的同步檔）——
@@ -1865,7 +1942,14 @@
         disconnectCloudSyncSilently();
         return;
       }
-      if (action !== 'imported') pushToActiveSync();
+      if (action !== 'imported') {
+        pushToActiveSync();
+        // 這台裝置的資料變成這個 token 的準版本——連帶把本機歷史也推一次去雲端「補齊」
+        // 歷史檔案（可能是全新 token，雲端還沒有任何歷史檔案）。只有連結/覆蓋這個一次性
+        // 動作才這樣做，不是每次同步都推，見 buildCloudHistoryPayload()/pushHistoryIfCloud()
+        // 上面的說明。
+        pushHistoryIfCloud();
+      }
     });
     closeCloudSyncModal();
   });
@@ -2113,7 +2197,29 @@
         '發現「' + transport.label + '」外部有改動，內容跟這台裝置目前的資料不一樣（可能是其他使用者/裝置存取了同一個同步管道），選一個方向：'
       ).then(function (action) {
         if (action === 'cancel') return 'cancel';
-        if (action === 'import') { applyImportedData(remote); return 'imported'; }
+        if (action === 'import') {
+          // remote 是雲端「當天資料」那份，不含歷史封存（見 cloudSyncFetchText() 只抓
+          // &part=current）——真的要匯入，得另外抓一次歷史檔案補上，applyImportedData()
+          // 才吃得下（它要求 dayHistory 是個物件）。只有 readHistoryText 存在（雲端這條路）
+          // 才需要多這一步，本機檔案同步的 remote 本來就是整包，不用另外處理。
+          if (transport.readHistoryText) {
+            return transport.readHistoryText().then(function (histText) {
+              var hist = null;
+              if (histText && histText.trim()) {
+                try { hist = JSON.parse(histText); } catch (e) { hist = null; }
+              }
+              remote.dayHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
+              applyImportedData(remote);
+              return 'imported';
+            }).catch(function () {
+              remote.dayHistory = {};
+              applyImportedData(remote);
+              return 'imported';
+            });
+          }
+          applyImportedData(remote);
+          return 'imported';
+        }
         return 'overwrite';
       });
     }).catch(function () { return 'no-diff'; /* 讀不到就當作沒有衝突，不影響正常使用 */ });
