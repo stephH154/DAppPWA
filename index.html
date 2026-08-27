@@ -1110,7 +1110,12 @@
     });
   }
 
+  // 每次真的動到本機資料就 +1——resolveSyncDiff() 用這個判斷「比對開始之後，使用者是不是
+  // 已經自己動手改過東西」，見下方註解，這裡不用理解細節，只要記得「任何會改資料的地方
+  // 幾乎都會流經 persistAll()」這件事本來就成立（本來就是為了存檔跟推播雲端才走這裡）。
+  var editGeneration = 0;
   function persistAll() {
+    editGeneration++;
     pruneHistory();
     saveJSON(KEY_DEFS, taskDefs);
     saveJSON(KEY_DAY, dayState);
@@ -1839,15 +1844,106 @@
   });
   createSyncFileBtn.addEventListener('click', createNewSyncFile);
 
+  /* 比對本機跟雲端資料，回傳「這次差異值不值得跳出來打斷使用者」，而不是像以前一樣整包
+     JSON.stringify 比對——那樣任何差異（包括每天都在發生的勾選完成、新增任務）都會跳出
+     確認視窗，太吵。分類規則：
+       安全（不用跳視窗）：某個任務/子任務只是 pending<->done 之間的差異（不管哪一邊是
+         哪個狀態）、或本機比雲端「多」一個任務/子任務——本機新增的東西推上去雲端只會
+         變多不會少，沒有遺失資料的風險。
+       一定跳視窗：本機比雲端「少」一個任務/子任務（雲端有、本機沒有——本機這次推播會把
+         雲端這筆資料蓋掉，是真的會遺失資料的情況）；或標題/每日旗標/備註/範本內容不一樣；
+         或狀態差異牽涉到 'deferred'（不是單純 pending/done 那組安全組合）。
+       即使全部都是安全類差異，只要累計超過 2 筆，還是跳視窗——差異一多，代表可能積了
+         好一陣子沒同步，值得讓使用者自己看一眼，不能無條件都吞掉。
+     只算「今天」這份 dayState.items 裡看得到的任務／範本子任務，歷史封存不在比對範圍內。 */
+  function classifySyncDiff(remote) {
+    var points = [];
+
+    var localItemsById = {};
+    dayState.items.forEach(function (it) { localItemsById[it.taskId] = it; });
+    var remoteItemsById = {};
+    (Array.isArray(remote.dayState.items) ? remote.dayState.items : []).forEach(function (it) { remoteItemsById[it.taskId] = it; });
+
+    var localDefsById = {};
+    taskDefs.forEach(function (d) { localDefsById[d.id] = d; });
+    var remoteDefsById = {};
+    (remote.taskDefs || []).forEach(function (d) { remoteDefsById[d.id] = d; });
+
+    function statusPairIsSafe(a, b) { return [a, b].sort().join(',') === 'done,pending'; }
+
+    var allTaskIds = {};
+    Object.keys(localItemsById).forEach(function (id) { allTaskIds[id] = true; });
+    Object.keys(remoteItemsById).forEach(function (id) { allTaskIds[id] = true; });
+
+    Object.keys(allTaskIds).forEach(function (taskId) {
+      var localItem = localItemsById[taskId];
+      var remoteItem = remoteItemsById[taskId];
+
+      if (localItem && !remoteItem) { points.push('local-added'); return; }
+      if (!localItem && remoteItem) { points.push('local-missing'); return; }
+
+      if (localItem.status !== remoteItem.status) {
+        points.push(statusPairIsSafe(localItem.status, remoteItem.status) ? 'status-flip' : 'other');
+      }
+
+      var localDef = localDefsById[taskId];
+      var remoteDef = remoteDefsById[taskId];
+      if (!localDef || !remoteDef) return;
+
+      if (localDef.title !== remoteDef.title || !!localDef.isDaily !== !!remoteDef.isDaily || (localDef.note || '') !== (remoteDef.note || '')) {
+        points.push('other');
+      }
+
+      var localSubs = Array.isArray(localDef.subtasks) ? localDef.subtasks : [];
+      var remoteSubs = Array.isArray(remoteDef.subtasks) ? remoteDef.subtasks : [];
+      if (!localSubs.length && !remoteSubs.length) return;
+
+      var localSubsById = {};
+      localSubs.forEach(function (s) { localSubsById[s.id] = s; });
+      var remoteSubsById = {};
+      remoteSubs.forEach(function (s) { remoteSubsById[s.id] = s; });
+      var allSubIds = {};
+      Object.keys(localSubsById).forEach(function (id) { allSubIds[id] = true; });
+      Object.keys(remoteSubsById).forEach(function (id) { allSubIds[id] = true; });
+
+      Object.keys(allSubIds).forEach(function (subId) {
+        var ls = localSubsById[subId];
+        var rs = remoteSubsById[subId];
+        if (ls && !rs) { points.push('local-added'); return; }
+        if (!ls && rs) { points.push('local-missing'); return; }
+        if (ls.title !== rs.title) { points.push('other'); return; }
+        if (ls.status !== rs.status) points.push(statusPairIsSafe(ls.status, rs.status) ? 'status-flip' : 'other');
+      });
+    });
+
+    if (JSON.stringify(templates) !== JSON.stringify(remote.templates || [])) points.push('other');
+
+    var hasMissing = points.indexOf('local-missing') !== -1;
+    var hasOther = points.indexOf('other') !== -1;
+    var safeCount = points.filter(function (p) { return p === 'status-flip' || p === 'local-added'; }).length;
+
+    return points.length > 0 && (hasMissing || hasOther || safeCount > 2);
+  }
+
   /* 讀同步檔案、跟本機比對內容是否不同；有差異就跳跟「連結既有檔案」同一套三選一確認
      （確定＝從檔案匯入、覆蓋＝之後由呼叫端自己決定要不要立刻寫回檔案、取消＝整個放棄這次
      比對）。這裡只負責「怎麼決定」，回傳一個 Promise resolve 成 'imported' / 'overwrite' /
      'no-diff' / 'cancel' 四種結果之一——「解決完之後接下來要做什麼」（要不要立刻寫檔、要不要
      改動 needsReauth）留給呼叫端自己處理，因為開機比對跟重新授權這兩個情境的後續動作不一樣，
-     沒辦法在這裡一次概括處理。 */
-  function resolveSyncDiff(cancelLabel) {
+     沒辦法在這裡一次概括處理。
+     attempt 參數是內部用的重試計數，外部呼叫一律不用帶。 */
+  function resolveSyncDiff(cancelLabel, attempt) {
+    attempt = attempt || 0;
     var transport = activeSyncTransport();
     if (!transport) return Promise.resolve('no-diff');
+    // 讀取雲端是非同步的，讀的當下到讀完中間這一兩秒，使用者完全可能自己動手完成/新增了
+    // 任務。用 editGeneration 記錄「發起這次讀取的當下，本機資料改了幾次」，讀完之後如果
+    // 發現數字變了，代表使用者在等待期間自己動過手——不能直接放棄比對（那樣萬一同時真的
+    // 有外部改動，會被使用者這次推播悄悄蓋掉、完全沒有警告），改成重新抓一次最新雲端內容、
+    // 拿「現在」的本機資料重新比對一次，最多重試 3 次；如果使用者真的連續不間斷操作導致
+    // 一直比不出穩定結果，第 3 次之後不再重試，直接拿當下讀到的資料照下面的分類邏輯判斷——
+    // 寧可極端情況下多跳一次可能過期的警告，也不要無條件放棄、悄悄漏掉真正的外部差異。
+    var checkGeneration = editGeneration;
     return transport.readText().then(function (text) {
       var remote = null;
       if (text && text.trim()) {
@@ -1855,9 +1951,11 @@
       }
       if (!remote || !remote.dayState || !Array.isArray(remote.taskDefs)) return 'no-diff';
 
-      var localSig = JSON.stringify({ taskDefs: taskDefs, dayState: dayState, templates: templates });
-      var remoteSig = JSON.stringify({ taskDefs: remote.taskDefs, dayState: remote.dayState, templates: remote.templates || [] });
-      if (localSig === remoteSig) return 'no-diff';
+      if (editGeneration !== checkGeneration && attempt < 3) {
+        return resolveSyncDiff(cancelLabel, attempt + 1);
+      }
+
+      if (!classifySyncDiff(remote)) return 'no-diff';
 
       return askSyncConflictAction(
         transport.label,
