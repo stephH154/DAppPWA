@@ -71,6 +71,11 @@
   .side-btn:active { transform: scale(.96); }
   .side-btn.linked { border-color: var(--green); background: var(--green-soft); }
   .side-btn.linked .side-btn-label { color: var(--green); }
+  /* 跟 .tool-btn.needs-auth 是同一組意思（雲端同步斷線），這裡是 cloudSyncMenuBtn 在
+     手機那個身分（.side-btn）要用的版本——見 placeMobileToolbarItems() 旁邊的警語，
+     這顆按鈕的任何新狀態樣式都要補兩份，這是其中一次真的照做的示範。 */
+  .side-btn.needs-auth { border-color: var(--red); background: var(--red-soft); }
+  .side-btn.needs-auth .side-btn-label { color: var(--red); }
 
   .task-menu-btn {
     display: none;
@@ -539,6 +544,8 @@
   .tool-btn:hover .side-btn-label { color: var(--ink); }
   .tool-btn.linked .side-btn-label { color: var(--green); }
   .tool-btn.needs-auth { color: var(--red); border-color: var(--red); background: var(--red-soft); }
+  /* 同一個坑踩了兩次——.linked 曾經漏掉這條，這次 .needs-auth 又漏了一次，補上 */
+  .tool-btn.needs-auth .side-btn-label { color: var(--red); }
 
   .menu-wrap { position: relative; }
   .dropdown-menu {
@@ -585,6 +592,38 @@
     z-index: 55;
   }
   .detail-overlay.open { opacity: 1; pointer-events: auto; }
+
+  /* 切回畫面時鎖定操作、跑一個「同步中」的圈圈，等確認跟雲端一致再放行——z-index 故意
+     設得比其他 overlay（55）高很多，蓋住整個畫面包含側邊工具列，真的鎖住所有互動，不是
+     只鎖卡片本體。這裡不接受點擊關閉（沒有 .open 之外的其他觸發），只有 JS 呼叫
+     hideSyncLock() 才會關掉，避免使用者手滑點掉遮罩、以為同步完成了但其實還沒。 */
+  .sync-lock-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    background: rgba(44, 42, 34, .55);
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    color: #f7f3e7; font-size: 13px; font-weight: 600;
+  }
+  .sync-lock-overlay.open { display: flex; }
+  .sync-lock-spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(247, 243, 231, .3); border-top-color: #f7f3e7;
+    animation: sync-lock-spin .8s linear infinite;
+  }
+  @keyframes sync-lock-spin { to { transform: rotate(360deg); } }
+
+  /* 雲端同步失敗（逾時/離線）的小提示——畫面下方浮出一個短暫的紅色 pill，跟同步中的
+     鎖定畫面是分開的兩件事：鎖定畫面關掉之後（放行操作）才會需要這個，不會同時出現。 */
+  .sync-fail-toast {
+    position: fixed; left: 50%; bottom: 28px; z-index: 400;
+    transform: translateX(-50%) translateY(16px);
+    background: var(--red); color: #fff;
+    padding: 10px 18px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow);
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    max-width: calc(100% - 40px); text-align: center;
+  }
+  .sync-fail-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
   .detail-drawer {
     position: fixed;
@@ -937,6 +976,13 @@
   <div id="taskSheetList" style="display:flex;flex-direction:column;gap:8px;margin-top:14px"></div>
 </div>
 
+<div class="sync-lock-overlay" id="syncLockOverlay">
+  <div class="sync-lock-spinner"></div>
+  <div class="sync-lock-text">與雲端同步中…</div>
+</div>
+
+<div class="sync-fail-toast" id="syncFailToast"></div>
+
 <div class="detail-overlay" id="syncConflictOverlay"></div>
 <div class="shortcuts-modal" id="syncConflictModal">
   <div class="detail-head">
@@ -973,6 +1019,11 @@
   var KEY_SHOW_DAILY_TOMORROW = 'dtc_showDailyInTomorrow';
   var KEY_ONBOARDING_SEEN = 'dtc_onboardingSeen';
   var KEY_CLOUD_SYNC_TOKEN = 'dtc_cloudSyncToken';
+  // 上一次已知的同步管道「內容最後修改時間」——本機檔案是 File.lastModified，雲端是
+  // Apps Script 回傳的 Drive 檔案 getLastUpdated()。切回畫面時先問這個輕量版時間戳，
+  // 跟這裡存的值一樣就代表沒人動過，完全不用把整份任務資料抓下來比對、也不用鎖畫面
+  // 跳圈圈；不一樣才需要做完整的抓取+比對。見 checkRemoteSyncForChanges()。
+  var KEY_LAST_KNOWN_SYNC_MODIFIED = 'dtc_lastKnownSyncModified';
   // 匯出格式的版號——欄位是陸續加上去的（templates、skipDailyTomorrow…），之前都是用
   // 「這個欄位存不存在」土法煉鋼判斷要不要相容處理，加個明確版號之後，之後格式再變，
   // 可以直接看 schemaVersion 分支，不用每個欄位各自猜「這是舊格式還是使用者手動改壞的」
@@ -1162,6 +1213,8 @@
   var importInput = document.getElementById('importInput');
   var syncBtn = document.getElementById('syncBtn');
   var createSyncFileBtn = document.getElementById('createSyncFileBtn');
+  var syncLockOverlay = document.getElementById('syncLockOverlay');
+  var syncFailToast = document.getElementById('syncFailToast');
   var syncConflictOverlay = document.getElementById('syncConflictOverlay');
   var syncConflictModal = document.getElementById('syncConflictModal');
   var syncConflictTitle = document.getElementById('syncConflictTitle');
@@ -1507,6 +1560,13 @@
   // 實際拿到的網址（daily-task-cloud-sync-apps-script.txt 裡的部署步驟第 7 步）。
   var CLOUD_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec';
   var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
+  var lastKnownSyncModified = loadJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, null);
+  function saveLastKnownSyncModified(v) { lastKnownSyncModified = v; saveJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, v); }
+  // 雲端同步這次檢查/推播是不是失敗（逾時、離線、後端錯誤）——只在記憶體，重新整理頁面
+  // 就重置，不特別持久化：失敗只是「現在暫時連不上」的暫時狀態，不是永久設定的一部分，
+  // 沒有理由存進 localStorage 跨裝置/跨分頁記住它。token 完全不清掉，使用者自己按按鈕
+  // 重試或重開 app 都會用同一組密鑰自動重新嘗試連線。
+  var cloudSyncDisconnected = false;
 
   function idbOpen() {
     return new Promise(function (resolve, reject) {
@@ -1600,6 +1660,12 @@
             return writable.close();
           });
         });
+      }).then(function () {
+        // 寫完之後重新讀一次檔案的 lastModified，記下來當「輕量版檢查」下次比對的基準——
+        // 跟雲端那邊 doPost 回應直接帶 lastModified 是同一個目的，只是本機檔案沒有對應的
+        // 回應可以順路帶，要自己多讀一次（File System Access API 這個讀法本身很快，
+        // 不用真的讀檔案內容）。
+        return fileHandle.getFile().then(function (f) { saveLastKnownSyncModified(f.lastModified); });
       });
     }).catch(function () { /* 使用者可能移除或改了檔案位置，下次點按鈕會重新授權 */ });
   }
@@ -1612,19 +1678,55 @@
   // （OPTIONS 請求），只要 Content-Type 落在「simple request」範圍內就不會觸發 preflight，
   // 這是這個做法唯一需要小心的地方，其餘就是普通的 fetch。token 放進 JSON body 本身，
   // 不是放 header——放 header 一樣會觸發 preflight，等於白做。
+  var CLOUD_SYNC_TIMEOUT_MS = 6000;
+  // fetch() 本身沒有內建逾時——網路離線或訊號差時，request 可能整個吊在那裡不 resolve
+  // 也不 reject，永遠等不到結果。用 AbortController 手動設一個逾時，時間到了主動中斷，
+  // 這樣才會確實觸發 catch，讓上層知道「這次連不上」，可以標記斷線狀態、跳提示。
+  function cloudFetch(url, options) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, CLOUD_SYNC_TIMEOUT_MS);
+    var opts = { method: options && options.method, headers: options && options.headers, body: options && options.body, signal: controller.signal };
+    return fetch(url, opts).then(function (res) {
+      clearTimeout(timer);
+      return res;
+    }, function (err) {
+      clearTimeout(timer);
+      throw err;
+    });
+  }
+
   function cloudSyncFetchText() {
     if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
     var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken);
-    return fetch(url).then(function (res) { return res.text(); });
+    return cloudFetch(url).then(function (res) { return res.text(); });
+  }
+
+  // 輕量版檢查——只問「這個 token 對應的檔案最後修改時間是多少」，後端不讀檔案內容
+  // （見 apps-script 那份程式碼的 doGet &meta=1 分支），回應很小、很快。
+  function cloudSyncFetchMeta() {
+    if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
+    var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&meta=1';
+    return cloudFetch(url).then(function (res) { return res.text(); }).then(function (text) {
+      var data = JSON.parse(text);
+      if (typeof data.lastModified !== 'number') throw new Error('bad-meta');
+      return data.lastModified;
+    });
   }
 
   function cloudSyncPushRemote() {
     if (!cloudSyncToken) return Promise.resolve();
     return buildExportPayload().then(function (payload) {
-      return fetch(CLOUD_SYNC_URL, {
+      return cloudFetch(CLOUD_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ token: cloudSyncToken, payload: payload })
+      }).then(function (res) { return res.text(); }).then(function (text) {
+        // 後端這次寫入完成後的 Drive 檔案時間戳直接跟著回應回來，順手記下來當作「輕量版
+        // 檢查」下次比對的基準，不用另外再多打一次 &meta=1 才知道剛剛寫進去之後的時間。
+        try {
+          var data = JSON.parse(text);
+          if (typeof data.lastModified === 'number') saveLastKnownSyncModified(data.lastModified);
+        } catch (e) { /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
       });
     }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
   }
@@ -1632,14 +1734,22 @@
   // 目前生效中的同步方式——本機檔案／雲端兩者互斥，同一時間只會有一個算數（見設定雲端同步
   // 時會先解除本機檔案連結、反之亦然）。resolveSyncDiff()／pushToActiveSync() 都透過這個
   // 介面操作，不用各自分別判断要走哪一條路，之後如果還要加第三種同步方式，也只要多實作
-  // 這三個方法就好，不用動到比對/解決衝突的邏輯本身。網址是寫死的常數（CLOUD_SYNC_URL），
+  // 這幾個方法就好，不用動到比對/解決衝突的邏輯本身。網址是寫死的常數（CLOUD_SYNC_URL），
   // 只有 token 是使用者輸入、需要判斷「有沒有設定」的部分。
+  // isCloud 是給 checkRemoteSyncForChanges() 判斷失敗時要不要標記「斷線」用的——本機檔案
+  // 同步失敗已經有自己的 needsReauth 機制處理，不需要再套用雲端專用的斷線提示。
   function activeSyncTransport() {
     if (fileHandle && !needsReauth) {
-      return { label: fileHandle.name, readText: function () { return fileHandle.getFile().then(function (f) { return f.text(); }); }, write: writeToLinkedFile };
+      return {
+        label: fileHandle.name,
+        readText: function () { return fileHandle.getFile().then(function (f) { return f.text(); }); },
+        readMeta: function () { return fileHandle.getFile().then(function (f) { return f.lastModified; }); },
+        write: writeToLinkedFile,
+        isCloud: false
+      };
     }
     if (cloudSyncToken) {
-      return { label: '雲端同步', readText: cloudSyncFetchText, write: cloudSyncPushRemote };
+      return { label: '雲端同步', readText: cloudSyncFetchText, readMeta: cloudSyncFetchMeta, write: cloudSyncPushRemote, isCloud: true };
     }
     return null;
   }
@@ -1696,19 +1806,26 @@
     fileHandle = null;
     needsReauth = false;
     idbDel('handles', 'linked');
+    saveLastKnownSyncModified(null); // 換掉同步管道，舊的「已知時間戳」對新管道沒有意義
     updateSyncBtn();
   }
   function disconnectCloudSyncSilently() {
     if (!cloudSyncToken) return;
     cloudSyncToken = '';
     localStorage.removeItem(KEY_CLOUD_SYNC_TOKEN);
+    cloudSyncDisconnected = false;
+    saveLastKnownSyncModified(null);
     updateCloudSyncUi();
   }
 
   function updateCloudSyncUi() {
     var connected = !!cloudSyncToken;
-    cloudSyncMenuLabel.textContent = connected ? '雲端同步（已連結）' : '雲端同步';
-    cloudSyncMenuBtn.classList.toggle('linked', connected);
+    // 斷線只在「已設定 token、但最近一次連線失敗」時才顯示——沒設定 token 就不算斷線，
+    // 就是單純的「雲端同步」未連結狀態，跟本機檔案的 needsReauth 邏輯是分開兩件事。
+    var disconnected = connected && cloudSyncDisconnected;
+    cloudSyncMenuLabel.textContent = disconnected ? '雲端同步（斷線）' : (connected ? '雲端同步（已連結）' : '雲端同步');
+    cloudSyncMenuBtn.classList.toggle('linked', connected && !disconnected);
+    cloudSyncMenuBtn.classList.toggle('needs-auth', disconnected);
     cloudSyncTokenInput.value = cloudSyncToken;
     cloudSyncDisconnectBtn.style.display = connected ? 'block' : 'none';
   }
@@ -1738,6 +1855,8 @@
     disconnectFileSyncSilently();
     cloudSyncToken = token;
     saveJSON(KEY_CLOUD_SYNC_TOKEN, cloudSyncToken);
+    cloudSyncDisconnected = false;
+    saveLastKnownSyncModified(null); // 換了一組密鑰,舊的「已知時間戳」是對應到別組密鑰的資料,沒有意義
     updateCloudSyncUi();
     // 連結當下先比對一次，跟連結本機檔案同一個道理——這個網址背後可能早就有資料了
     // （例如另一台裝置已經在用），不能無條件用這台裝置的（可能是空的）資料蓋過去
@@ -1862,12 +1981,17 @@
     var localItemsById = {};
     dayState.items.forEach(function (it) { localItemsById[it.taskId] = it; });
     var remoteItemsById = {};
-    (Array.isArray(remote.dayState.items) ? remote.dayState.items : []).forEach(function (it) { remoteItemsById[it.taskId] = it; });
+    // .filter(Boolean) 是防手滑/防外部資料壞掉——remote 是雲端/檔案來的資料，不是本機自己
+    // 產生的，陣列裡如果混進 null（不是型別錯誤，是陣列元素本身是空的），底下直接讀
+    // it.taskId／d.id 會丟例外，外層 resolveSyncDiff 的 catch 會把整次比對吞成 'no-diff'——
+    // 等於本來要抓外部差異的功能，遇到損毀資料反而完全不比對，静默放行，違背這個功能
+    // 存在的目的。先過濾掉 null/undefined 元素，比對邏輯才會照樣跑完。
+    (Array.isArray(remote.dayState.items) ? remote.dayState.items : []).filter(Boolean).forEach(function (it) { remoteItemsById[it.taskId] = it; });
 
     var localDefsById = {};
     taskDefs.forEach(function (d) { localDefsById[d.id] = d; });
     var remoteDefsById = {};
-    (remote.taskDefs || []).forEach(function (d) { remoteDefsById[d.id] = d; });
+    (Array.isArray(remote.taskDefs) ? remote.taskDefs : []).filter(Boolean).forEach(function (d) { remoteDefsById[d.id] = d; });
 
     function statusPairIsSafe(a, b) { return [a, b].sort().join(',') === 'done,pending'; }
 
@@ -1895,7 +2019,7 @@
       }
 
       var localSubs = Array.isArray(localDef.subtasks) ? localDef.subtasks : [];
-      var remoteSubs = Array.isArray(remoteDef.subtasks) ? remoteDef.subtasks : [];
+      var remoteSubs = (Array.isArray(remoteDef.subtasks) ? remoteDef.subtasks : []).filter(Boolean);
       if (!localSubs.length && !remoteSubs.length) return;
 
       var localSubsById = {};
@@ -1959,13 +2083,29 @@
       }
 
       var diff = classifySyncDiff(remote);
-      if (!diff.needsDialog) {
-        // 差異存在但判斷是安全類型（見 classifySyncDiff 註解）——不打斷使用者，但主動推一次
-        // 讓雲端盡快追上本機，不用等到剛好有下一次真正的編輯動作才順便同步過去。
-        if (diff.hasDiff) pushToActiveSync();
-        return 'no-diff';
-      }
+      // 原本這裡用 diff.needsDialog 篩選——只有「不安全」的差異才跳窗，安全的差異（單純
+      // pending<->done、本機新增）直接默默推播，理由是怕在使用者還在操作的當下跳窗打斷他。
+      // 現在切回畫面時會先鎖定整個畫面、跑同步中的圈圈，等這裡回應完才放行操作（見
+      // checkRemoteSyncForChanges() 的鎖定邏輯）——使用者這個當下本來就還沒開始動手，
+      // 不會有「打斷正在做的事」這個問題，所以不用再幫他篩選「這個差異值不值得看」，
+      // 只要有差異（diff.hasDiff）就跳出來讓他自己選。needsDialog 篩選邏輯保留在
+      // classifySyncDiff() 裡（分類本身還是有意義的診斷資訊），只是這裡不再用它決定
+      // 要不要跳窗。
+      if (!diff.hasDiff) return 'no-diff';
+      // 原本安全差異會走這條路，靜默推播、不跳窗，不鎖畫面時代這個邏輯還有意義；
+      // 現在切回畫面一律鎖定+跳窗，這段先註解掉。想恢復「不鎖畫面、安靜同步」的舊行為，
+      // 把上面 if (!diff.hasDiff) 改回 if (!diff.needsDialog)，再把這段取消註解就好。
+      // if (!diff.needsDialog) {
+      //   if (diff.hasDiff) pushToActiveSync();
+      //   return 'no-diff';
+      // }
 
+      // 真的要跳確認視窗了——先把「同步中」鎖定畫面收起來，不然它的 z-index 比這個對話框
+      // 高，會蓋住對話框的按鈕，變成看得到但點不到。這個對話框本身就是一個會擋住操作的
+      // modal，接手鎖定畫面的責任，不需要兩層 overlay 疊在一起。hideSyncLock() 在沒有
+      // 顯示鎖定畫面時呼叫也沒事（純粹拿掉一個 class），手動重新連結那幾個呼叫點沒有經過
+      // checkRemoteSyncForChanges()、從來沒顯示過鎖定畫面，這裡一樣安全。
+      hideSyncLock();
       return askSyncConflictAction(
         transport.label,
         cancelLabel,
@@ -1979,14 +2119,85 @@
     }).catch(function () { return 'no-diff'; /* 讀不到就當作沒有衝突，不影響正常使用 */ });
   }
 
-  /* 讀目前生效中的同步管道（本機檔案或雲端，見 activeSyncTransport()）：如果內容跟這台
-     裝置目前的不一樣（代表其他裝置/使用者寫入過），問使用者要不要載入。取消＝這次先不
-     處理，維持本機資料，不強制立刻覆蓋（之後正常操作觸發存檔時還是會自然覆蓋掉）；
-     覆蓋＝立刻把本機資料寫回去。 */
-  function checkRemoteSyncForChanges() {
-    if (!activeSyncTransport()) return Promise.resolve();
-    return resolveSyncDiff('先不處理，維持本機資料').then(function (action) {
+  function showSyncLock() { syncLockOverlay.classList.add('open'); }
+  function hideSyncLock() { syncLockOverlay.classList.remove('open'); }
+
+  var syncFailToastTimer = null;
+  function showSyncFailToast(msg) {
+    syncFailToast.textContent = msg;
+    syncFailToast.classList.add('show');
+    clearTimeout(syncFailToastTimer);
+    syncFailToastTimer = setTimeout(function () { syncFailToast.classList.remove('show'); }, 3500);
+  }
+
+  /* 逾時放行的時間——網路狀況不好（離線、訊號差）時，fetch 可能久久沒有回應甚至根本不會
+     resolve/reject，鎖定畫面如果沒有這個安全閥，使用者會被卡死在自己的任務清單前面完全
+     動不了，這比「沒等到同步結果」嚴重得多。逾時之後就放行操作，這次比對留在背景繼續跑，
+     真的跑出結果（跳確認視窗，或需要 overwrite）還是會照樣發生，只是不再擋著畫面——
+     等於退回鎖定機制生效之前「背景檢查，有結果隨時跳出來」的舊行為，不是真的漏掉這次檢查。 */
+  var SYNC_LOCK_TIMEOUT_MS = 6000;
+
+  /* 真正的「鎖畫面+跳圈圈+完整比對」流程，只有輕量版檢查（見下方 checkRemoteSyncForChanges）
+     確認「內容真的變了」才會跑到這裡。跟以前比起來多了 showSyncLock/hideSyncLock，其餘
+     行為不變：確定＝從檔案匯入、覆蓋＝立刻把本機資料寫回去、取消＝這次先不處理。 */
+  function runFullSyncCheck() {
+    showSyncLock();
+    var checkPromise = resolveSyncDiff('先不處理，維持本機資料').then(function (action) {
       if (action === 'overwrite') pushToActiveSync();
+    });
+    var timeoutPromise = new Promise(function (resolve) {
+      setTimeout(resolve, SYNC_LOCK_TIMEOUT_MS);
+    });
+    return Promise.race([checkPromise, timeoutPromise]).then(function () {
+      hideSyncLock();
+    });
+  }
+
+  /* 切回畫面/剛開機時的進入點，分兩層：
+     1. 輕量版檢查（transport.readMeta()）——只問一句「最後修改時間變了嗎」，不鎖畫面、
+        不跳圈圈、不打斷使用者，多數情況下（沒人動過同步管道）到這裡就結束了。
+     2. 確認真的變了，才呼叫 runFullSyncCheck()——這時候才鎖畫面、跳圈圈、抓完整內容
+        比對，理由見那個函式上面的註解（避免使用者切回來馬上動手造成的假警報）。
+     雲端同步這條路如果第 1 層就失敗（逾時、離線、後端錯誤），標記成「斷線」狀態：
+     按鈕文字變成「雲端同步（斷線）」、跳一個「雲端同步失敗」的提示，但**密鑰不會被清掉**——
+     使用者自己按一次雲端同步按鈕重試，或直接重開 app/網站，都會用同一組密鑰自動重新
+     嘗試連線，不用重新輸入。本機檔案同步失敗已經有自己的 needsReauth 機制，不套用這裡的
+     斷線提示（見 activeSyncTransport() 的 isCloud 欄位）。 */
+  // 防止兩次呼叫重疊——開機時 idbGet('handles','linked') 解析完會呼叫一次，幾乎同時
+  // pageshow 事件也可能呼叫一次，兩個都跑到 runFullSyncCheck() 的話會同時搶同一個
+  // askSyncConflictAction() 對話框（全域只有一份 DOM／一份 onclick 綁定），後呼叫的會
+  // 直接覆蓋掉先呼叫的按鈕綁定，先呼叫那次的使用者選擇就這樣被悄悄蓋掉、永遠等不到
+  // 使用者按下去，只能靠 runFullSyncCheck() 自己的逾時放行收尾。用一個簡單的旗標擋掉
+  // 「已經有一次檢查在跑」的重複呼叫，不管是輕量版檢查階段還是完整比對階段都算在內。
+  var syncCheckInFlight = false;
+  function checkRemoteSyncForChanges() {
+    var transport = activeSyncTransport();
+    if (!transport) return Promise.resolve();
+    if (syncCheckInFlight) return Promise.resolve();
+    syncCheckInFlight = true;
+    return transport.readMeta().then(function (remoteModified) {
+      if (transport.isCloud && cloudSyncDisconnected) {
+        cloudSyncDisconnected = false;
+        updateCloudSyncUi();
+      }
+      if (remoteModified === lastKnownSyncModified) return;
+      return runFullSyncCheck().then(function () {
+        // 不管這次比對最後選了哪個（確定／覆蓋／取消），都已經看過這個時間點的雲端內容
+        // 一次，更新已知時間戳——即使使用者這次選「取消」，下次切回來如果雲端沒有再變過，
+        // 也不用拿同一份舊差異再問一次。真的又有新變動，remoteModified 到時候會跟這裡
+        // 存的值不一樣，還是會正常觸發下一輪完整比對。
+        saveLastKnownSyncModified(remoteModified);
+      });
+    }).catch(function () {
+      if (transport.isCloud) {
+        cloudSyncDisconnected = true;
+        updateCloudSyncUi();
+        showSyncFailToast('☁️ 雲端同步失敗，稍後再試');
+      }
+      // 不管哪種同步方式，輕量版檢查失敗就當這次檢查作罷，不影響正常使用本機資料——
+      // 跟原本 resolveSyncDiff() 讀取失敗時的處理哲學一致。
+    }).then(function () {
+      syncCheckInFlight = false;
     });
   }
 
