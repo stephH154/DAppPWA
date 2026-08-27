@@ -793,9 +793,9 @@
       <button class="side-btn" id="templatesBtn" title="任務範本"><span class="side-btn-icon">📦</span><span class="side-btn-label">範本</span></button>
     </div>
     <div class="card">
-      <button type="button" class="card-help-btn" id="cardHelpBtn" title="快速說明">?</button>
+      <button type="button" class="card-help-btn" id="cardHelpBtn" title="快速說明" aria-label="快速說明">?</button>
       <div class="header">
-        <button class="round-btn" id="prevBtn" title="前一天">‹</button>
+        <button class="round-btn" id="prevBtn" title="前一天" aria-label="前一天">‹</button>
         <div class="date-block">
           <div class="date-main" id="dateMain"></div>
           <div class="date-sub-row">
@@ -805,7 +805,7 @@
             </div>
           </div>
         </div>
-        <button class="round-btn" id="nextBtn" title="後一天">›</button>
+        <button class="round-btn" id="nextBtn" title="後一天" aria-label="後一天">›</button>
       </div>
       <button class="today-pill" id="primaryBtn" style="display:none"></button>
 
@@ -814,9 +814,9 @@
 
       <form class="add-form" id="addForm">
         <input type="text" id="newTitle" placeholder="新增任務…" maxlength="60" autocomplete="off">
-        <button type="button" class="date-btn" id="scheduleToggle" title="指定日期">📅</button>
+        <button type="button" class="date-btn" id="scheduleToggle" title="指定日期" aria-label="指定日期">📅</button>
         <input type="date" id="scheduleDate" style="display:none">
-        <button type="submit" class="add-submit" title="加入">＋</button>
+        <button type="submit" class="add-submit" title="加入" aria-label="加入">＋</button>
       </form>
     </div>
   </div>
@@ -841,7 +841,7 @@
 <aside class="detail-drawer" id="detailDrawer">
   <div class="detail-head">
     <div class="detail-title" id="detailTitle"></div>
-    <button class="round-btn" id="detailClose">×</button>
+    <button class="round-btn" id="detailClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <div class="detail-meta" id="detailMeta"></div>
   <div class="detail-label">備註</div>
@@ -873,7 +873,7 @@
 <div class="shortcuts-modal" id="shortcutsModal">
   <div class="detail-head">
     <div class="shortcuts-title">鍵盤快捷鍵</div>
-    <button class="round-btn" id="shortcutsClose">×</button>
+    <button class="round-btn" id="shortcutsClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <div class="kbd-row"><span class="kbd">N</span><span>新增任務（游標跳進輸入框，僅限「今天」）</span></div>
   <div class="kbd-row"><span class="kbd">←</span><span class="kbd">→</span><span>切換日期</span></div>
@@ -888,7 +888,7 @@
 <div class="search-modal" id="searchModal">
   <div class="detail-head">
     <div class="shortcuts-title">搜尋</div>
-    <button class="round-btn" id="searchClose">×</button>
+    <button class="round-btn" id="searchClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <input type="text" id="searchInput" class="search-input" placeholder="搜尋標題或備註…">
   <ul class="list" id="searchResultsList" style="margin-top:6px"></ul>
@@ -898,7 +898,7 @@
 <div class="shortcuts-modal" id="templatesModal">
   <div class="detail-head">
     <div class="shortcuts-title">任務範本</div>
-    <button class="round-btn" id="templatesClose">×</button>
+    <button class="round-btn" id="templatesClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <ul class="list" id="templatesList" style="margin-top:10px"></ul>
   <div class="detail-label" id="templateFormLabel">新增範本</div>
@@ -908,7 +908,7 @@
   <ul class="list" id="templateItemsList" style="margin-top:6px"></ul>
   <div style="display:flex;gap:8px;margin-top:8px">
     <input type="text" id="newTemplateItemInput" class="search-input" placeholder="新增子任務項目…" style="margin:0">
-    <button type="button" class="add-submit" id="addTemplateItemBtn" title="加入子任務">＋</button>
+    <button type="button" class="add-submit" id="addTemplateItemBtn" title="加入子任務" aria-label="加入子任務">＋</button>
   </div>
 
   <div style="display:flex;gap:8px;align-items:center;margin-top:14px">
@@ -921,7 +921,7 @@
 <div class="shortcuts-modal" id="csvModal">
   <div class="detail-head">
     <div class="shortcuts-title">匯入 CSV 預覽</div>
-    <button class="round-btn" id="csvClose">×</button>
+    <button class="round-btn" id="csvClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <div class="detail-meta">只匯入標題（跟偵測到的日期），優先級/標籤/備註等其他欄位不會保留。</div>
   <ul class="list" id="csvPreviewList" style="margin-top:10px"></ul>
@@ -932,7 +932,7 @@
 <div class="shortcuts-modal" id="taskSheetModal">
   <div class="detail-head">
     <div class="shortcuts-title" id="taskSheetTitle"></div>
-    <button class="round-btn" id="taskSheetClose">×</button>
+    <button class="round-btn" id="taskSheetClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <div id="taskSheetList" style="display:flex;flex-direction:column;gap:8px;margin-top:14px"></div>
 </div>
@@ -954,7 +954,7 @@
 <div class="shortcuts-modal" id="cloudSyncModal">
   <div class="detail-head">
     <div class="shortcuts-title">☁️ 雲端同步</div>
-    <button class="round-btn" id="cloudSyncClose">×</button>
+    <button class="round-btn" id="cloudSyncClose" title="關閉" aria-label="關閉">×</button>
   </div>
   <div class="detail-meta" style="margin-top:6px">網址已經內建好了，輸入跟 Apps Script 裡設定的同一組密鑰就好（設定教學見 daily-task-calendar-guide.html）。跟「本機同步檔案」是二選一，設定這裡會自動解除本機檔案連結。</div>
   <input type="text" id="cloudSyncTokenInput" class="search-input" placeholder="密鑰（跟 Apps Script 裡的 TOKEN 要一樣）" style="margin-top:14px">
@@ -1922,7 +1922,10 @@
     var hasOther = points.indexOf('other') !== -1;
     var safeCount = points.filter(function (p) { return p === 'status-flip' || p === 'local-added'; }).length;
 
-    return points.length > 0 && (hasMissing || hasOther || safeCount > 2);
+    return {
+      hasDiff: points.length > 0,
+      needsDialog: points.length > 0 && (hasMissing || hasOther || safeCount > 2)
+    };
   }
 
   /* 讀同步檔案、跟本機比對內容是否不同；有差異就跳跟「連結既有檔案」同一套三選一確認
@@ -1955,7 +1958,13 @@
         return resolveSyncDiff(cancelLabel, attempt + 1);
       }
 
-      if (!classifySyncDiff(remote)) return 'no-diff';
+      var diff = classifySyncDiff(remote);
+      if (!diff.needsDialog) {
+        // 差異存在但判斷是安全類型（見 classifySyncDiff 註解）——不打斷使用者，但主動推一次
+        // 讓雲端盡快追上本機，不用等到剛好有下一次真正的編輯動作才順便同步過去。
+        if (diff.hasDiff) pushToActiveSync();
+        return 'no-diff';
+      }
 
       return askSyncConflictAction(
         transport.label,
@@ -2350,7 +2359,14 @@
      這個按鈕用得夠頻繁，值得常駐顯示；換成把「⌨️ 快捷鍵」收進「更多」挪出空間），手機寬度
      時再換一次 class（'tool-btn' <-> 'side-btn'），讓它在手機上長得跟🔍搜尋／📦範本一樣是
      圖示卡片；用 insertBefore 塞回 menuWrap 前面，不是單純 appendChild 到工具列最後面，
-     否則位置會跑到「更多」按鈕後面去。 */
+     否則位置會跑到「更多」按鈕後面去。
+
+     ⚠️ cloudSyncMenuBtn 是唯一一個會在 'tool-btn' 跟 'side-btn' 兩種身分之間動態切換的元素
+     （其他按鈕終身只有一種 class）。已經踩過一次坑：後來加的「已連結」綠色高亮
+     （.linked）只補了 .side-btn.linked 那份規則，忘記 .tool-btn.linked 也要補一份一模一樣
+     的，結果桌面版「已連結」文字顏色沒變、只有邊框變綠。之後只要是「這顆按鈕在某個狀態下
+     要長什麼樣子」的新規則，一定要同時檢查 CSS 裡有沒有 .tool-btn.<state> 跟
+     .side-btn.<state> 兩份都寫，只寫一份大概率就是漏掉另一個情境。 */
   var toolbarEl = document.getElementById('toolbar');
   var menuWrapEl = document.getElementById('menuWrap');
   var mobileLayoutQuery = window.matchMedia('(max-width: 560px)');
