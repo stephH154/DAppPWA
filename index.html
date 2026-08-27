@@ -278,7 +278,22 @@
     flex-shrink: 0;
   }
   .caret-btn:hover { color: var(--ink); }
+  .caret-btn.has-note { color: var(--red); }
+  .caret-btn.has-note:hover { color: var(--red); }
   .subtask-list { position: relative; background: var(--bg); border-radius: 0 0 14px 14px; padding: 4px 10px 8px 16px; }
+  .history-note {
+    background: var(--bg);
+    border-radius: 0 0 14px 14px;
+    padding: 6px 14px 10px 16px;
+    font-size: 12.5px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  /* 兩者都有時，子任務清單接在備註前面，底部就不該圓角，圓角交給排在最後的備註區塊——
+     這支 app 本來就假設 Chromium 系瀏覽器（File System Access API 的既有前提），:has() 沒有
+     額外相容性顧慮。 */
+  .subtask-list:has(+ .history-note) { border-radius: 0; }
   .swipe-content.has-subtasks-open { border-radius: 14px 14px 0 0; }
   .sub-row {
     display: flex;
@@ -3988,23 +4003,31 @@
       // 只有存過子任務快照的項目才能展開（見 archiveDay()）；換版本之前留下的舊歷史紀錄
       // 沒有這份資料，就照舊顯示成一般列，不會出現一個點了沒反應的假展開箭頭。
       var hasSubtasks = !!(it.subtasks && it.subtasks.length);
+      // 備註也是換日封存時「順手」存進快照的（見 archiveDay() 的 entry.note），只是原本
+      // 唯讀畫面從沒讀過這個欄位——資料一直都在，只是沒地方看。展開/收合這個互動本來就是
+      // 給子任務用的，備註沒有子任務也一樣需要展開才看得到，兩者共用同一個 expandable 判斷
+      // 跟同一顆展開箭頭，不用另外做第二套互動。
+      var hasNote = !!(it.note && it.note.trim());
+      var expandable = hasSubtasks || hasNote;
 
       var li = document.createElement('li');
-      li.className = hasSubtasks ? 'item swipe-row' : 'item';
+      li.className = expandable ? 'item swipe-row' : 'item';
 
-      // 沒有子任務時 row 就是 li 本身（跟原本一樣的純一列）；有子任務時借用
+      // 沒有子任務/備註時 row 就是 li 本身（跟原本一樣的純一列）；有的話借用
       // .swipe-content 的視覺樣式（跟今天畫面展開的父任務列同一套外觀），但完全不接
       // 任何滑除/拖曳/選單邏輯——這個畫面自始至終唯讀，只有展開/收合這一個互動。
       var row = li;
-      if (hasSubtasks) {
+      if (expandable) {
         row = document.createElement('div');
         row.className = 'swipe-content' + (it.status === 'done' ? ' is-done' : '');
         li.appendChild(row);
 
         var caret = document.createElement('button');
-        caret.className = 'caret-btn';
+        caret.className = 'caret-btn' + (hasNote ? ' has-note' : '');
         caret.textContent = expandedHistoryItems[it.taskId] ? '▾' : '▸';
-        caret.title = '展開／收合子任務（唯讀，不能修改）';
+        caret.title = hasSubtasks && hasNote ? '展開／收合子任務與備註（唯讀，不能修改）'
+          : hasNote ? '展開／收合備註（唯讀，不能修改）'
+          : '展開／收合子任務（唯讀，不能修改）';
         row.appendChild(caret);
       }
 
@@ -4033,33 +4056,42 @@
       status.textContent = statusLabel[it.status] || it.status;
       row.appendChild(status);
 
-      if (hasSubtasks) {
+      if (expandable) {
         row.addEventListener('click', function () {
           expandedHistoryItems[it.taskId] = !expandedHistoryItems[it.taskId];
           render();
         });
 
         if (expandedHistoryItems[it.taskId]) {
-          var subList = document.createElement('div');
-          subList.className = 'subtask-list';
-          it.subtasks.forEach(function (sub) {
-            var subDone = sub.status === 'done';
-            var subRow = document.createElement('div');
-            subRow.className = 'sub-row' + (subDone ? ' is-done' : '');
+          if (hasSubtasks) {
+            var subList = document.createElement('div');
+            subList.className = 'subtask-list';
+            it.subtasks.forEach(function (sub) {
+              var subDone = sub.status === 'done';
+              var subRow = document.createElement('div');
+              subRow.className = 'sub-row' + (subDone ? ' is-done' : '');
 
-            var subDot = document.createElement('span');
-            subDot.className = 'check-dot readonly' + (subDone ? ' checked' : '');
-            subDot.textContent = '✓';
-            subRow.appendChild(subDot);
+              var subDot = document.createElement('span');
+              subDot.className = 'check-dot readonly' + (subDone ? ' checked' : '');
+              subDot.textContent = '✓';
+              subRow.appendChild(subDot);
 
-            var subTitle = document.createElement('span');
-            subTitle.className = 'item-title' + (subDone ? ' done' : '');
-            subTitle.textContent = sub.title;
-            subRow.appendChild(subTitle);
+              var subTitle = document.createElement('span');
+              subTitle.className = 'item-title' + (subDone ? ' done' : '');
+              subTitle.textContent = sub.title;
+              subRow.appendChild(subTitle);
 
-            subList.appendChild(subRow);
-          });
-          li.appendChild(subList);
+              subList.appendChild(subRow);
+            });
+            li.appendChild(subList);
+          }
+
+          if (hasNote) {
+            var noteBox = document.createElement('div');
+            noteBox.className = 'history-note';
+            noteBox.textContent = it.note;
+            li.appendChild(noteBox);
+          }
         }
       }
 

@@ -2,7 +2,7 @@
 //
 // 部署新版本時，把 CACHE_NAME 的版號往上加一（v1 -> v2）——瀏覽器靠這個字串判斷
 // 「這是不是同一份快取」，版號沒變就永遠讀舊的快取內容，使用者會覺得「怎麼更新了畫面卻沒變」。
-var CACHE_NAME = 'daily-task-cache-v29';
+var CACHE_NAME = 'daily-task-cache-v30';
 
 var CORE_ASSETS = [
   './',
