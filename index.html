@@ -1863,7 +1863,14 @@
   // （OPTIONS 請求），只要 Content-Type 落在「simple request」範圍內就不會觸發 preflight，
   // 這是這個做法唯一需要小心的地方，其餘就是普通的 fetch。token 放進 JSON body 本身，
   // 不是放 header——放 header 一樣會觸發 preflight，等於白做。
-  var CLOUD_SYNC_TIMEOUT_MS = 6000;
+  // 原本設 6000（6 秒），後來使用者直接用瀏覽器測 ?meta=1 網址，實測 current 約 10 秒、
+  // history 有時 20~30 秒才回應（Apps Script 本身的冷啟動/Drive API 延遲，免費個人帳號
+  // 排隊優先度較低，不是這支程式碼寫壞——跟稍早討論「為什麼 Apps Script 有時候跑很慢」
+  // 提到的平台特性一致）。6 秒的逾時比實際回應時間短，等於每一次請求都還沒得到後端真正的
+  // 回應就被主動中斷，「雲端同步（斷線）」因此變成幾乎每次都會觸發的常態，不是真的斷線。
+  // 拉長到 20 秒，讓大多數正常但慢的請求有機會真的等到回應，只有真的連不上（離線/逾時
+  // 更久）才會被判定斷線。
+  var CLOUD_SYNC_TIMEOUT_MS = 20000;
   // fetch() 本身沒有內建逾時——網路離線或訊號差時，request 可能整個吊在那裡不 resolve
   // 也不 reject，永遠等不到結果。用 AbortController 手動設一個逾時，時間到了主動中斷，
   // 這樣才會確實觸發 catch，讓上層知道「這次連不上」，可以標記斷線狀態、跳提示。
@@ -1898,6 +1905,16 @@
     var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&meta=1&part=current';
     return cloudFetch(url).then(function (res) { return res.text(); }).then(function (text) {
       var data = JSON.parse(text);
+      // 後端明確回報錯誤（例如密鑰沒登記）時，把錯誤代碼掛在拋出的例外上——
+      // checkRemoteSyncForChanges() 的 catch 可以用這個判斷要跳「密鑰未授權」還是
+      // 「暫時連不上」，不要兩種完全不同的原因都顯示同一句籠統的「雲端同步失敗」，
+      // 讓使用者誤以為是網路問題、重試好幾次都不會好（見「儲存並連結」那邊同一個
+      // 問題的說明）。
+      if (data && data.error) {
+        var err = new Error('remote-error');
+        err.remoteError = data.error;
+        throw err;
+      }
       if (typeof data.lastModified !== 'number') throw new Error('bad-meta');
       return data.lastModified;
     });
@@ -2090,9 +2107,23 @@
     updateCloudSyncUi();
     // 連結當下先比對一次，跟連結本機檔案同一個道理——這個網址背後可能早就有資料了
     // （例如另一台裝置已經在用），不能無條件用這台裝置的（可能是空的）資料蓋過去
-    resolveSyncDiff('不設定雲端同步').then(function (action) {
+    runLockedSyncCheck('不設定雲端同步', function (action) {
       if (action === 'cancel') {
         disconnectCloudSyncSilently();
+        return;
+      }
+      if (typeof action === 'string' && action.indexOf('remote-error:') === 0) {
+        // 後端明確回報錯誤（不是網路逾時/連不上），繼續推播只會再被拒絕一次，
+        // 而且會靜默失敗——直接解除連結、把真正的原因講清楚，讓使用者知道要去
+        // 檢查密鑰/後端登記，而不是留在「已連結」的假象狀態，下次背景檢查才發現
+        // 斷線又不知道為什麼。
+        disconnectCloudSyncSilently();
+        var errCode = action.slice('remote-error:'.length);
+        alert(errCode === 'unauthorized'
+          ? '這組密鑰沒有在後端登記——請確認密鑰有沒有打錯，或請後端管理者用 addToken() 把這組密鑰加進 TOKEN_FILES。'
+          : errCode === 'busy'
+            ? '後端目前忙線中（拿鎖逾時），過幾秒再試一次「儲存並連結」。'
+            : '後端回應了未預期的錯誤（' + errCode + '），暫時無法連結。');
         return;
       }
       if (action !== 'imported') {
@@ -2181,7 +2212,7 @@
         // 重新走一次這個流程）。
         needsReauth = false;
         updateSyncBtn();
-        resolveSyncDiff('取消這次重新授權').then(function (action) {
+        runLockedSyncCheck('取消這次重新授權', function (action) {
           if (action === 'cancel') {
             needsReauth = true;
             updateSyncBtn();
@@ -2313,6 +2344,15 @@
       if (text && text.trim()) {
         try { remote = JSON.parse(text); } catch (e) { remote = null; }
       }
+      // 後端回傳 { error: 'unauthorized' }（密鑰沒登記）或 { error: 'busy' }（拿鎖逾時）
+      // 這種形狀時，parse 完全不會失敗——remote 是個合法物件，只是沒有 dayState/taskDefs。
+      // 如果不特別檢查，會直接掉進下面「沒有 dayState/taskDefs 就當沒有差異」那條路，
+      // 悄悄當成「這是一個全新、還沒有任何資料的合法帳號」處理：不跳警告、後面接著
+      // pushToActiveSync() 這次推播也一樣會被後端拒絕、一樣被靜默吞掉——使用者從頭到尾
+      // 不會看到任何錯誤訊息，只會在下一次背景檢查時發現「雲端同步（斷線）」，完全不知道
+      // 真正的原因是密鑰沒被登記，不是網路問題。這裡先攔下來，回傳一個帶著錯誤代碼的
+      // 專屬字串，讓呼叫端（目前只有「儲存並連結」會用到）可以跳出真正對得上根因的訊息。
+      if (remote && remote.error) return 'remote-error:' + remote.error;
       if (!remote || !remote.dayState || !Array.isArray(remote.taskDefs)) return 'no-diff';
 
       if (editGeneration !== checkGeneration && attempt < 3) {
@@ -2356,15 +2396,26 @@
           // 才吃得下（它要求 dayHistory 是個物件）。只有 readHistoryText 存在（雲端這條路）
           // 才需要多這一步，本機檔案同步的 remote 本來就是整包，不用另外處理。
           if (transport.readHistoryText) {
+            // 這一步是拆分之前沒有的額外一次網路來回——使用者反應「按下確認之後畫面
+            // 反而要等一下才更新」，根因就是這裡：以前 remote 已經是整包，選匯入當下
+            // 直接同步套用；現在要多等一次歷史檔案抓回來，加上這支 Apps Script 部署本身
+            // 回應偏慢（見 CLOUD_SYNC_TIMEOUT_MS 那邊的說明，實測十幾秒到二十幾秒），這段
+            // 等待變得很明顯。重新亮起「同步中」鎖定畫面，讓使用者至少看得到系統正在做事，
+            // 不是卡住——上面 resolveSyncDiff() 一開始為了不讓鎖定畫面蓋住確認視窗才呼叫
+            // hideSyncLock()，使用者做出選擇之後、確認視窗已經關閉，這裡重新鎖定不會有
+            // 兩層 overlay 疊在一起的問題。
+            showSyncLock();
             return transport.readHistoryText().then(function (histText) {
               var hist = null;
               if (histText && histText.trim()) {
                 try { hist = JSON.parse(histText); } catch (e) { hist = null; }
               }
               remote.dayHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
+              hideSyncLock();
               applyImportedData(remote);
               return 'imported';
             }).catch(function () {
+              hideSyncLock();
               remote.dayHistory = {};
               applyImportedData(remote);
               return 'imported';
@@ -2393,8 +2444,13 @@
      resolve/reject，鎖定畫面如果沒有這個安全閥，使用者會被卡死在自己的任務清單前面完全
      動不了，這比「沒等到同步結果」嚴重得多。逾時之後就放行操作，這次比對留在背景繼續跑，
      真的跑出結果（跳確認視窗，或需要 overwrite）還是會照樣發生，只是不再擋著畫面——
-     等於退回鎖定機制生效之前「背景檢查，有結果隨時跳出來」的舊行為，不是真的漏掉這次檢查。 */
-  var SYNC_LOCK_TIMEOUT_MS = 6000;
+     等於退回鎖定機制生效之前「背景檢查，有結果隨時跳出來」的舊行為，不是真的漏掉這次檢查。
+     原本設 6 秒，跟 CLOUD_SYNC_TIMEOUT_MS 一起被使用者實測的真實回應時間（10~30 秒）打臉——
+     6 秒幾乎每次都比單一個 cloudFetch() 還沒回應就先逾時放行，等於「鎖畫面確認」這個功能
+     實際上很少真的等到比對結果，大多數時候都是靠這個逾時安全閥收尾，不是設計的本意。拉長
+     到比 CLOUD_SYNC_TIMEOUT_MS（20 秒）還長一點，讓一般情況下的單次比對（沒有 retry）
+     有機會在鎖定期間內真的跑完，安全閥還是留著、只是往後挪，不是拿掉。 */
+  var SYNC_LOCK_TIMEOUT_MS = 25000;
 
   /* 真正的「鎖畫面+跳圈圈+完整比對」流程，只有輕量版檢查（見下方 checkRemoteSyncForChanges）
      確認「內容真的變了」才會跑到這裡。跟以前比起來多了 showSyncLock/hideSyncLock，其餘
@@ -2403,6 +2459,34 @@
     showSyncLock();
     var checkPromise = resolveSyncDiff('先不處理，維持本機資料').then(function (action) {
       if (action === 'overwrite') pushToActiveSync();
+    });
+    var timeoutPromise = new Promise(function (resolve) {
+      setTimeout(resolve, SYNC_LOCK_TIMEOUT_MS);
+    });
+    return Promise.race([checkPromise, timeoutPromise]).then(function () {
+      hideSyncLock();
+    });
+  }
+
+  // 手動觸發的同步確認共用邏輯（「儲存並連結」雲端同步、本機檔案「重新授權」）——這兩個
+  // 入口原本是直接呼叫 resolveSyncDiff()，完全沒有鎖畫面、也沒有設 syncCheckInFlight。
+  // 使用者回報「儲存並連結按下去畫面完全沒反應，等了 30 幾秒，切回來就變雲端同步斷線」，
+  // 根因是這兩件事疊在一起：① 沒有任何視覺回饋，使用者等到不耐煩、切出去再切回來；
+  // ② 切回來觸發的 checkSyncOnFocus()→checkRemoteSyncForChanges() 完全不知道這裡已經有
+  // 一個同步請求在飛，沒被任何旗標擋掉，另外發起一個完全獨立、彼此互搶資源的雲端請求，
+  // 兩邊同時打反而更容易逾時/失敗，使用者因此看到「明明還在等，卻已經斷線」的假象。
+  // 修法：套用跟 runFullSyncCheck() 一樣的鎖畫面+逾時安全閥，並且補上 syncCheckInFlight——
+  // 這裡刻意讓旗標在「真的比對完成」才解除，不是在逾時那一刻就解除（比 runFullSyncCheck()
+  // 目前的寫法更嚴謹一點，但不去動 runFullSyncCheck() 本身，避免牽動已經驗證過很多輪的
+  // 背景檢查路徑）：就算鎖畫面因為逾時先解除、放使用者回去操作，背景那個真正的
+  // resolveSyncDiff() 還沒完成之前，新的背景檢查一樣會被這個旗標擋掉，不會又疊一個。
+  // onResolved(action) 只在 resolveSyncDiff() 真的解決之後才會被呼叫（逾時放行不算解決）。
+  function runLockedSyncCheck(cancelLabel, onResolved) {
+    syncCheckInFlight = true;
+    showSyncLock();
+    var checkPromise = resolveSyncDiff(cancelLabel).then(function (action) {
+      syncCheckInFlight = false;
+      if (onResolved) onResolved(action);
     });
     var timeoutPromise = new Promise(function (resolve) {
       setTimeout(resolve, SYNC_LOCK_TIMEOUT_MS);
@@ -2447,11 +2531,18 @@
         // 存的值不一樣，還是會正常觸發下一輪完整比對。
         saveLastKnownSyncModified(remoteModified);
       });
-    }).catch(function () {
+    }).catch(function (err) {
       if (transport.isCloud) {
         cloudSyncDisconnected = true;
         updateCloudSyncUi();
-        showSyncFailToast('☁️ 雲端同步失敗，稍後再試');
+        // remoteError 是 cloudSyncFetchMeta() 在後端明確回報錯誤時掛上去的（見那邊的
+        // 說明）——區分「密鑰根本沒登記」跟「暫時連不上/逾時」，不要都顯示同一句籠統的
+        // 「稍後再試」，那樣使用者會一直重試一個永遠不會自己好的問題（密鑰沒登記不會
+        // 因為多等幾秒就自動變成有登記）。
+        var remoteError = err && err.remoteError;
+        showSyncFailToast(remoteError === 'unauthorized' ? '☁️ 密鑰未授權，請檢查雲端同步設定'
+          : remoteError === 'busy' ? '☁️ 後端忙線中，稍後再試'
+          : '☁️ 雲端同步失敗，稍後再試');
       }
       // 不管哪種同步方式，輕量版檢查失敗就當這次檢查作罷，不影響正常使用本機資料——
       // 跟原本 resolveSyncDiff() 讀取失敗時的處理哲學一致。
@@ -2497,17 +2588,43 @@
     lastSyncFocusCheckAt = now;
     checkRemoteSyncForChanges();
   }
+
+  // 換日邏輯本來就是「只在開啟當下判斷一次，不用背景計時器」（見 checkRollover() 上面的
+  // 註解），但那個判斷只發生在整支 script 真正重新跑一次的時候——分頁開著切出去、跨過
+  // 午夜再切回來，並不會重新跑 script，換日永遠不會發生，要等下一次真的重新整理才追得上。
+  // 跟同步檢查同樣的道理（尤其手機 PWA「切回來」常常只是作業系統喚醒凍結的分頁，連
+  // pageshow 都算數，不是真的重新載入），補上「切回來也順便判斷一次」——這個判斷本身只是
+  // 比較兩個日期字串，成本可以忽略，不需要額外的冷卻時間；真的跨了日才會有實際的資料異動
+  // 跟 render()，沒跨日的話 checkRollover() 直接回傳 false，什麼都不做。
+  function checkRolloverOnFocus() {
+    var wasOnToday = (currentView === dayState.date);
+    if (!checkRollover()) return;
+    pushHistoryIfCloud();
+    persistAll();
+    // 使用者當下如果本來就停在「今天」畫面，換日後把 currentView 一起推進到新的今天，
+    // 不然畫面會停在舊日期、卻因為那天已經被封存進 dayHistory 而突然變成唯讀快照，
+    // 使用者什麼都沒做，畫面卻從可互動變唯讀，會很困惑。如果使用者本來就是在瀏覽過去
+    // 的某一天（不是今天），不動 currentView——背景默默換日不該打斷他正在看的歷史畫面。
+    if (wasOnToday) currentView = dayState.date;
+    scheduleDate.min = dayState.date;
+    render();
+  }
+
+  function onWindowRefocus() {
+    checkRolloverOnFocus();
+    checkSyncOnFocus();
+  }
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') checkSyncOnFocus();
+    if (document.visibilityState === 'visible') onWindowRefocus();
   });
-  window.addEventListener('focus', checkSyncOnFocus);
+  window.addEventListener('focus', onWindowRefocus);
   // 手機上裝成 PWA（standalone 模式）之後，從主畫面圖示「切回來」很多時候是作業系統把
   // 背景凍結的分頁喚醒，不是重新載入整個頁面——這種情況下 visibilitychange／focus 在部分
   // 行動瀏覽器上不一定會確實觸發（桌面版一般瀏覽器分頁反而很可靠，這是手機/桌面表現不一致
   // 的根本原因）。pageshow 是瀏覽器規範裡專門處理「頁面重新顯示，包含從凍結/bfcache 喚醒」
-  // 的事件，相容性涵蓋這個情境更完整，補上同一個 checkSyncOnFocus()（本來就有冷卻時間擋
-  // 重複觸發，加這個不會變成多檢查）。
-  window.addEventListener('pageshow', checkSyncOnFocus);
+  // 的事件，相容性涵蓋這個情境更完整，補上同一個 onWindowRefocus()（同步檢查那邊本來就有
+  // 冷卻時間擋重複觸發，加這個不會變成多檢查）。
+  window.addEventListener('pageshow', onWindowRefocus);
 
   /* ---------- 移除：先掛「待移除」5 秒、原地換成可復原提示，時間到才真的刪 ---------- */
   var pendingRemovals = {};
