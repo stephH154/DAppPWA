@@ -2120,9 +2120,9 @@
         disconnectCloudSyncSilently();
         var errCode = action.slice('remote-error:'.length);
         alert(errCode === 'unauthorized'
-          ? '這組密鑰沒有在後端登記——請確認密鑰有沒有打錯，或請後端管理者用 addToken() 把這組密鑰加進 TOKEN_FILES。'
+          ? '未登記的密鑰，請洽系統管理員'
           : errCode === 'busy'
-            ? '後端目前忙線中（拿鎖逾時），過幾秒再試一次「儲存並連結」。'
+            ? '雲端忙碌中，請過幾秒重試「儲存並連結」'
             : '後端回應了未預期的錯誤（' + errCode + '），暫時無法連結。');
         return;
       }
