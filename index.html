@@ -443,6 +443,26 @@
     padding: 0 2px 0 4px;
     flex-shrink: 0;
   }
+
+  /* 同步衝突視窗的「顯示差異」——小連結樣式，不跟下面確定/覆蓋/取消三顆決策按鈕搶視覺
+     份量，點了原地展開/收合差異清單，不是另開一個畫面（見 askSyncConflictAction()）。 */
+  .diff-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: none;
+    color: var(--green);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px 0 2px;
+  }
+  .diff-toggle:hover { text-decoration: underline; }
+  .diff-list { margin: 4px 0 0; max-height: 40vh; overflow-y: auto; }
+  .diff-list li.item.readonly { padding: 5px 0; }
+  .diff-list .item-title.readonly { font-size: 12px; }
   .detail-chevron:hover { color: var(--ink); }
   .detail-chevron.has-note { color: var(--red); }
 
@@ -1012,6 +1032,11 @@
     <div class="shortcuts-title" id="syncConflictTitle">同步檔案跟這裡都有資料</div>
   </div>
   <div class="detail-meta" id="syncConflictMsg" style="margin-top:8px"></div>
+  <!-- 只有 resolveSyncDiff() 帶著 classifySyncDiff() 算出來的明細呼叫這個對話框時才會顯示
+       （見 askSyncConflictAction() 裡的判斷）——「連結一個新檔案」那種情境沒有明細可看，
+       這顆按鈕跟下面的清單都保持隱藏。 -->
+  <button type="button" class="diff-toggle" id="syncConflictDiffToggle" style="display:none"></button>
+  <ul class="list diff-list" id="syncConflictDiffList" style="display:none"></ul>
   <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
     <button type="button" class="choice-btn primary" id="syncConflictImport">確定 —— 從檔案抓到這裡（覆蓋這台裝置的資料）</button>
     <button type="button" class="choice-btn danger" id="syncConflictOverwrite">覆蓋 —— 用這裡的資料覆蓋檔案</button>
@@ -1283,6 +1308,8 @@
   var syncConflictImportBtn = document.getElementById('syncConflictImport');
   var syncConflictOverwriteBtn = document.getElementById('syncConflictOverwrite');
   var syncConflictCancelBtn = document.getElementById('syncConflictCancel');
+  var syncConflictDiffToggle = document.getElementById('syncConflictDiffToggle');
+  var syncConflictDiffList = document.getElementById('syncConflictDiffList');
   var cloudSyncMenuBtn = document.getElementById('cloudSyncMenuBtn');
   var cloudSyncMenuLabel = document.getElementById('cloudSyncMenuLabel');
   var cloudSyncOverlay = document.getElementById('cloudSyncOverlay');
@@ -2019,11 +2046,34 @@
      彈窗會搞不清楚這次是哪一種狀況（尤其後者代表可能有其他裝置/使用者真的動過同一個檔案，
      語氣上該更明確一點，不是隨口一句「兩邊都有資料」而已）。 */
   var pendingSyncConflictSettle = null;
-  function askSyncConflictAction(fileName, cancelLabel, title, message) {
+  // diffPoints 是 classifySyncDiff() 算出來的明細（{type, desc} 陣列，見那個函式），
+  // 只有 resolveSyncDiff() 這個呼叫點會帶——「連結一個新檔案」那種情境（見
+  // finishLinkingHandle()）沒有明細可以比對，不帶這個參數，「顯示差異」按鈕跟清單保持隱藏，
+  // 不會出現一個點了沒東西可看的假按鈕。
+  function askSyncConflictAction(fileName, cancelLabel, title, message, diffPoints) {
     return new Promise(function (resolve) {
       syncConflictTitle.textContent = title || '同步檔案跟這裡都有資料';
       syncConflictMsg.textContent = message || ('「' + fileName + '」裡已經有資料，這台裝置目前也有自己的資料，選一個方向：');
       syncConflictCancelBtn.textContent = '取消 —— ' + (cancelLabel || '不設定同步');
+
+      syncConflictDiffList.innerHTML = '';
+      syncConflictDiffList.style.display = 'none';
+      if (diffPoints && diffPoints.length) {
+        syncConflictDiffToggle.style.display = '';
+        syncConflictDiffToggle.textContent = '顯示差異（' + diffPoints.length + ' 處）';
+        diffPoints.forEach(function (p) {
+          var li = document.createElement('li');
+          li.className = 'item readonly';
+          var span = document.createElement('span');
+          span.className = 'item-title readonly';
+          span.textContent = p.desc;
+          li.appendChild(span);
+          syncConflictDiffList.appendChild(li);
+        });
+      } else {
+        syncConflictDiffToggle.style.display = 'none';
+      }
+
       syncConflictModal.classList.add('open');
       syncConflictOverlay.classList.add('open');
 
@@ -2034,12 +2084,19 @@
         syncConflictImportBtn.onclick = null;
         syncConflictOverwriteBtn.onclick = null;
         syncConflictCancelBtn.onclick = null;
+        syncConflictDiffToggle.onclick = null;
         resolve(result);
       }
       pendingSyncConflictSettle = settle;
       syncConflictImportBtn.onclick = function () { settle('import'); };
       syncConflictOverwriteBtn.onclick = function () { settle('overwrite'); };
       syncConflictCancelBtn.onclick = function () { settle('cancel'); };
+      // 原地展開/收合，不是另開一顆彈窗——同一個決策畫面裡多看一眼細節，不用中斷流程。
+      syncConflictDiffToggle.onclick = function () {
+        var showing = syncConflictDiffList.style.display !== 'none';
+        syncConflictDiffList.style.display = showing ? 'none' : '';
+        syncConflictDiffToggle.textContent = showing ? ('顯示差異（' + diffPoints.length + ' 處）') : '隱藏差異';
+      };
     });
   }
   syncConflictOverlay.addEventListener('click', function () {
@@ -2262,6 +2319,9 @@
     (Array.isArray(remote.taskDefs) ? remote.taskDefs : []).filter(Boolean).forEach(function (d) { remoteDefsById[d.id] = d; });
 
     function statusPairIsSafe(a, b) { return [a, b].sort().join(',') === 'done,pending'; }
+    // 「顯示差異」功能要用的中文對照——只是給使用者看的描述用，不影響上面分類邏輯本身。
+    var statusLabel = { pending: '待處理', done: '已完成', deferred: '已延期' };
+    function statusText(s) { return statusLabel[s] || s; }
 
     var allTaskIds = {};
     Object.keys(localItemsById).forEach(function (id) { allTaskIds[id] = true; });
@@ -2270,20 +2330,32 @@
     Object.keys(allTaskIds).forEach(function (taskId) {
       var localItem = localItemsById[taskId];
       var remoteItem = remoteItemsById[taskId];
-
-      if (localItem && !remoteItem) { points.push('local-added'); return; }
-      if (!localItem && remoteItem) { points.push('local-missing'); return; }
-
-      if (localItem.status !== remoteItem.status) {
-        points.push(statusPairIsSafe(localItem.status, remoteItem.status) ? 'status-flip' : 'other');
-      }
-
       var localDef = localDefsById[taskId];
       var remoteDef = remoteDefsById[taskId];
+      // 「顯示差異」清單裡要秀任務標題——local-added/local-missing 這兩種情況下，
+      // 兩邊的 taskDefs 不一定都有這筆，挑存在的那一份取標題，都沒有就顯示佔位字串
+      // （理論上不該發生，因為 taskDefs 跟 dayState.items 本來就該一起維護，這裡只是防呆）。
+      var displayTitle = (localDef && localDef.title) || (remoteDef && remoteDef.title) || '(未知任務)';
+
+      if (localItem && !remoteItem) { points.push({ type: 'local-added', desc: displayTitle + '——只有本機新增' }); return; }
+      if (!localItem && remoteItem) { points.push({ type: 'local-missing', desc: displayTitle + '——只有雲端有這筆' }); return; }
+
+      if (localItem.status !== remoteItem.status) {
+        var safe = statusPairIsSafe(localItem.status, remoteItem.status);
+        points.push({
+          type: safe ? 'status-flip' : 'other',
+          desc: displayTitle + '——完成狀態不同（本機：' + statusText(localItem.status) + '／雲端：' + statusText(remoteItem.status) + '）'
+        });
+      }
+
       if (!localDef || !remoteDef) return;
 
-      if (localDef.title !== remoteDef.title || !!localDef.isDaily !== !!remoteDef.isDaily || (localDef.note || '') !== (remoteDef.note || '')) {
-        points.push('other');
+      var changedFields = [];
+      if (localDef.title !== remoteDef.title) changedFields.push('標題');
+      if (!!localDef.isDaily !== !!remoteDef.isDaily) changedFields.push('每日設定');
+      if ((localDef.note || '') !== (remoteDef.note || '')) changedFields.push('備註');
+      if (changedFields.length) {
+        points.push({ type: 'other', desc: displayTitle + '——' + changedFields.join('/') + '不同' });
       }
 
       var localSubs = Array.isArray(localDef.subtasks) ? localDef.subtasks : [];
@@ -2298,25 +2370,46 @@
       Object.keys(localSubsById).forEach(function (id) { allSubIds[id] = true; });
       Object.keys(remoteSubsById).forEach(function (id) { allSubIds[id] = true; });
 
+      // 子任務層級的差異一樣可以逐一列出來（母子任務不是「範本」——套用出去之後就是
+      // taskDefs 裡一筆普通的任務，跟其他任務一樣走上面同一套 taskId 比對，這裡是
+      // 同一個任務底下再往下一層比對它的子任務），不像下面「範本」清單只能整包比對。
       Object.keys(allSubIds).forEach(function (subId) {
         var ls = localSubsById[subId];
         var rs = remoteSubsById[subId];
-        if (ls && !rs) { points.push('local-added'); return; }
-        if (!ls && rs) { points.push('local-missing'); return; }
-        if (ls.title !== rs.title) { points.push('other'); return; }
-        if (ls.status !== rs.status) points.push(statusPairIsSafe(ls.status, rs.status) ? 'status-flip' : 'other');
+        if (ls && !rs) { points.push({ type: 'local-added', desc: displayTitle + ' 的子任務「' + ls.title + '」——只有本機新增' }); return; }
+        if (!ls && rs) { points.push({ type: 'local-missing', desc: displayTitle + ' 的子任務「' + rs.title + '」——只有雲端有這筆' }); return; }
+        // 標題不同跟完成狀態不同是各自獨立的檢查（不是 else if）——跟上面頂層任務的
+        // 標題/每日設定/備註檢查同一個道理，兩者剛好同時改過的話，兩筆都要各自記一筆，
+        // 不能因為先抓到標題不同就 return 掉，把同時發生的狀態差異漏掉不顯示。
+        if (ls.title !== rs.title) {
+          points.push({ type: 'other', desc: displayTitle + ' 的子任務標題不同（本機：「' + ls.title + '」／雲端：「' + rs.title + '」）' });
+        }
+        if (ls.status !== rs.status) {
+          var subSafe = statusPairIsSafe(ls.status, rs.status);
+          points.push({
+            type: subSafe ? 'status-flip' : 'other',
+            desc: displayTitle + ' 的子任務「' + ls.title + '」——完成狀態不同（本機：' + statusText(ls.status) + '／雲端：' + statusText(rs.status) + '）'
+          });
+        }
       });
     });
 
-    if (JSON.stringify(templates) !== JSON.stringify(remote.templates || [])) points.push('other');
+    // 「📦 範本」管理視窗裡的範本清單（templates 陣列）跟上面「已經套用出去、taskDefs
+    // 裡的母子任務」是兩回事——範本本身沒有像 taskId 那樣的穩定 key 可以逐筆比對，
+    // 這裡只能整包 JSON.stringify 比對，有差異就是有差異，沒辦法像上面一樣列出
+    // 「哪個範本、改了什麼」，只能給一個籠統的說明。
+    if (JSON.stringify(templates) !== JSON.stringify(remote.templates || [])) {
+      points.push({ type: 'other', desc: '範本內容有差異（無法列出細節）' });
+    }
 
-    var hasMissing = points.indexOf('local-missing') !== -1;
-    var hasOther = points.indexOf('other') !== -1;
-    var safeCount = points.filter(function (p) { return p === 'status-flip' || p === 'local-added'; }).length;
+    var hasMissing = points.some(function (p) { return p.type === 'local-missing'; });
+    var hasOther = points.some(function (p) { return p.type === 'other'; });
+    var safeCount = points.filter(function (p) { return p.type === 'status-flip' || p.type === 'local-added'; }).length;
 
     return {
       hasDiff: points.length > 0,
-      needsDialog: points.length > 0 && (hasMissing || hasOther || safeCount > 2)
+      needsDialog: points.length > 0 && (hasMissing || hasOther || safeCount > 2),
+      points: points
     };
   }
 
@@ -2387,7 +2480,8 @@
         transport.label,
         cancelLabel,
         '同步資料有外部改變',
-        '發現「' + transport.label + '」外部有改動，內容跟這台裝置目前的資料不一樣（可能是其他使用者/裝置存取了同一個同步管道），選一個方向：'
+        '發現「' + transport.label + '」外部有改動，內容跟這台裝置目前的資料不一樣（可能是其他使用者/裝置存取了同一個同步管道），選一個方向：',
+        diff.points
       ).then(function (action) {
         if (action === 'cancel') return 'cancel';
         if (action === 'import') {
