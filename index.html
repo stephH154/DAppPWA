@@ -829,16 +829,22 @@
         <button type="button" class="dropdown-item" id="shortcutsBtn">⌨️ 快捷鍵</button>
         <button type="button" class="dropdown-item" id="createSyncFileBtn" style="display:none" title="從頭建立一個全新的同步檔案">建立新同步檔案</button>
         <button type="button" class="dropdown-item" id="copyBtn">複製清單</button>
+        <!-- CSV 匯入目前沒有在使用，整段功能先 comment 掉（這顆按鈕＋下面的 csvInput／
+             csvOverlay／csvModal 三塊 HTML，跟 JS 那邊對應的 DOM 參照/函式/事件監聽器）。
+             未來要恢復使用時，這四塊 HTML 跟 JS 那幾塊要一起 uncomment，缺一塊會找不到
+             元素而整支 script 壞掉。
         <button type="button" class="dropdown-item" id="csvImportBtn">📥 匯入 CSV</button>
+        -->
         <button type="button" class="dropdown-item tool-btn" id="exportBtn">匯出備份</button>
         <button type="button" class="dropdown-item tool-btn" id="importBtn">匯入備份</button>
         <button type="button" class="dropdown-item" id="showDailyInTomorrowBtn">顯示明日每日任務</button>
         <div class="dropdown-divider"></div>
+        <button type="button" class="dropdown-item" id="clearTodayBtn" title="只清今天的清單，範本/歷史/每日任務定義/同步設定都不受影響">🧹 清除今天清單</button>
         <button type="button" class="dropdown-item danger" id="clearDataBtn">🗑️ 清空資料</button>
       </div>
     </div>
     <input type="file" id="importInput" accept="application/json" style="display:none">
-    <input type="file" id="csvInput" accept=".csv,text/csv" style="display:none">
+    <!-- <input type="file" id="csvInput" accept=".csv,text/csv" style="display:none"> -->
   </div>
 
   <div class="card-row">
@@ -971,6 +977,7 @@
   </div>
 </div>
 
+<!--
 <div class="detail-overlay" id="csvOverlay"></div>
 <div class="shortcuts-modal" id="csvModal">
   <div class="detail-head">
@@ -981,6 +988,7 @@
   <ul class="list" id="csvPreviewList" style="margin-top:10px"></ul>
   <button type="button" class="add-submit" id="csvConfirm" style="width:auto;border-radius:999px;padding:8px 18px;font-size:13px;margin-top:12px">確認匯入 <span id="csvCount"></span></button>
 </div>
+-->
 
 <div class="detail-overlay" id="taskSheetOverlay"></div>
 <div class="shortcuts-modal" id="taskSheetModal">
@@ -1008,6 +1016,22 @@
     <button type="button" class="choice-btn primary" id="syncConflictImport">確定 —— 從檔案抓到這裡（覆蓋這台裝置的資料）</button>
     <button type="button" class="choice-btn danger" id="syncConflictOverwrite">覆蓋 —— 用這裡的資料覆蓋檔案</button>
     <button type="button" class="choice-btn" id="syncConflictCancel">取消 —— 不設定同步</button>
+  </div>
+</div>
+
+<!-- 「清空資料」有設定自動同步時才會用到——同步端(雲端檔案/本機連結檔案)那份資料要不要
+     一起清掉，使用者自己選，不是程式幫忙猜。沒設定同步時，clearDataBtn 直接走原生 confirm()，
+     不會用到這個 modal。 -->
+<div class="detail-overlay" id="clearDataOverlay"></div>
+<div class="shortcuts-modal" id="clearDataModal">
+  <div class="detail-head">
+    <div class="shortcuts-title">清空資料</div>
+  </div>
+  <div class="detail-meta" id="clearDataMsg" style="margin-top:8px">此動作無法復原，建議先「匯出備份」留一份再清空。目前有設定自動同步，同步端那份資料要一起清掉嗎？</div>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px">
+    <button type="button" class="choice-btn danger" id="clearDataWipeAllBtn">清空全部 —— 同步端資料也一起清掉</button>
+    <button type="button" class="choice-btn" id="clearDataLocalOnlyBtn">只清本機 —— 解除同步，同步端資料不動</button>
+    <button type="button" class="choice-btn" id="clearDataCancelBtn">取消</button>
   </div>
 </div>
 
@@ -1239,7 +1263,13 @@
   var copyBtn = document.getElementById('copyBtn');
   var exportBtn = document.getElementById('exportBtn');
   var importBtn = document.getElementById('importBtn');
+  var clearTodayBtn = document.getElementById('clearTodayBtn');
   var clearDataBtn = document.getElementById('clearDataBtn');
+  var clearDataOverlay = document.getElementById('clearDataOverlay');
+  var clearDataModal = document.getElementById('clearDataModal');
+  var clearDataWipeAllBtn = document.getElementById('clearDataWipeAllBtn');
+  var clearDataLocalOnlyBtn = document.getElementById('clearDataLocalOnlyBtn');
+  var clearDataCancelBtn = document.getElementById('clearDataCancelBtn');
   var showDailyInTomorrowBtn = document.getElementById('showDailyInTomorrowBtn');
   var importInput = document.getElementById('importInput');
   var syncBtn = document.getElementById('syncBtn');
@@ -1304,14 +1334,16 @@
   var saveTemplateBtn = document.getElementById('saveTemplateBtn');
   var cancelEditTemplateBtn = document.getElementById('cancelEditTemplateBtn');
   var templateFormLabel = document.getElementById('templateFormLabel');
-  var csvImportBtn = document.getElementById('csvImportBtn');
-  var csvInput = document.getElementById('csvInput');
-  var csvOverlay = document.getElementById('csvOverlay');
-  var csvModal = document.getElementById('csvModal');
-  var csvClose = document.getElementById('csvClose');
-  var csvPreviewList = document.getElementById('csvPreviewList');
-  var csvConfirm = document.getElementById('csvConfirm');
-  var csvCount = document.getElementById('csvCount');
+  // CSV 匯入功能整個 comment 掉了（見上面 HTML／下面 JS 區塊的說明），這幾個 DOM 參照
+  // 跟著一起停用，不然 document.getElementById() 會抓到 null，後面掛事件監聽器會報錯。
+  // var csvImportBtn = document.getElementById('csvImportBtn');
+  // var csvInput = document.getElementById('csvInput');
+  // var csvOverlay = document.getElementById('csvOverlay');
+  // var csvModal = document.getElementById('csvModal');
+  // var csvClose = document.getElementById('csvClose');
+  // var csvPreviewList = document.getElementById('csvPreviewList');
+  // var csvConfirm = document.getElementById('csvConfirm');
+  // var csvCount = document.getElementById('csvCount');
 
   scheduleDate.min = dayState.date;
 
@@ -1529,39 +1561,145 @@
     render();
   }
 
-  /* 清空資料：整包重置回第一次使用的乾淨狀態，順便解除同步連結——
-     連結不解除的話，清空後下一次 persistAll() 會把「清空後的空資料」寫回同步檔案，
-     等於連同步檔案裡原本的東西也一起清掉，不是使用者要的效果 */
-  function clearAllData() {
-    if (!confirm('清空所有任務資料？此動作無法復原，建議先「匯出備份」留一份再清空。')) return;
+  /* 清除今天清單：只重置 dayState（今天/明天預覽/已排程之外的當天項目），範本、歷史、
+     每日任務定義、同步設定完全不動——犯不著為了「今天清單亂了想重來」這種常見情境，
+     把範本、歷史、跨天任務定義全部賠上（那是下面「清空資料」的事）。今天清單裡的
+     一次性任務定義（不是每日任務）一併清掉——留著也用不到，比照 rollover() 對完成
+     的一次性任務的處理方式（見換日邏輯一節），避免變成 taskDefs 裡永遠回收不到的
+     殘留垃圾。已排程（scheduledFor 還沒到）的任務不在 dayState.items 裡，不受影響。
+     這條路徑是一次普通的資料異動，照 persistAll() 正常同步出去就好，不需要問「要不要
+     連同步端一起清」——那個問題只有「清空資料」那種會把同步端資料也可能一併清空的
+     重砲動作才需要考慮。 */
+  function clearTodayList() {
+    if (!confirm('清除今天的清單？包含已完成/待處理/已延期的項目都會被清掉，每日任務定義、範本、歷史紀錄、排程任務、同步設定都不受影響，此動作無法復原。')) return;
+    dayState.items.forEach(function (it) {
+      var def = getDef(it.taskId);
+      if (def && !def.isDaily) removeDef(it.taskId);
+    });
+    dayState = { date: dayState.date, items: [] };
+    persistAll();
+    currentView = dayState.date;
+    scheduleDate.min = dayState.date;
+    render();
+  }
+  clearTodayBtn.addEventListener('click', clearTodayList);
+
+  /* 「清空資料」三選一——只有目前有生效中的同步管道才會問，沒有同步時問這個沒有意義，
+     直接走原生 confirm() 就好。 */
+  var pendingClearDataSettle = null;
+  function askClearDataAction() {
+    return new Promise(function (resolve) {
+      clearDataModal.classList.add('open');
+      clearDataOverlay.classList.add('open');
+      function settle(result) {
+        pendingClearDataSettle = null;
+        clearDataModal.classList.remove('open');
+        clearDataOverlay.classList.remove('open');
+        clearDataWipeAllBtn.onclick = null;
+        clearDataLocalOnlyBtn.onclick = null;
+        clearDataCancelBtn.onclick = null;
+        resolve(result);
+      }
+      pendingClearDataSettle = settle;
+      clearDataWipeAllBtn.onclick = function () { settle('wipe-all'); };
+      clearDataLocalOnlyBtn.onclick = function () { settle('local-only'); };
+      clearDataCancelBtn.onclick = function () { settle('cancel'); };
+    });
+  }
+  clearDataOverlay.addEventListener('click', function () {
+    if (pendingClearDataSettle) pendingClearDataSettle('cancel');
+  });
+
+  /* 清空資料：整包重置回第一次使用的乾淨狀態。wipeRemote 為 true 時，會在解除同步連結
+     之前，先把「清空後的空資料」主動推一次給同步端（雲端兩份檔案／本機連結檔案）——
+     不是任由它保持清空前的舊狀態不管；wipeRemote 為 false（或根本沒有同步管道）時，
+     維持原本的行為：解除連結但不動同步端既有內容，避免清空本機順便把同步端資料也
+     悄悄清掉（這是原本這個函式唯一支援的行為，見下面 disconnectXxxSilently 呼叫）。 */
+  function performClearAllData(wipeRemote) {
+    var transport = wipeRemote ? activeSyncTransport() : null;
+
     taskDefs = [];
     dayHistory = {};
     dayState = { date: todayStr(), items: [] };
     templates = [];
     showDailyInTomorrow = false;
     onboardingSeen = false;
-    // 徹底刪乾淨：直接 removeItem 移除 key 本身，不是照 persistAll()/saveTemplates() 那樣
-    // 把空值寫回去蓋掉——蓋掉的話 key 技術上還在（只是內容變空的），這裡要的是 key 真的消失。
-    // 之後只要有任何正常操作（新增任務等）觸發存檔，這些 key 自然會用新資料重新出現，
-    // 不需要另外處理「key 不見了程式會不會壞」——所有讀取都是走記憶體變數，不是直接讀 localStorage。
-    localStorage.removeItem(KEY_DEFS);
-    localStorage.removeItem(KEY_DAY);
-    localStorage.removeItem(KEY_HIST);
-    localStorage.removeItem(KEY_TEMPLATES);
-    localStorage.removeItem(KEY_SHOW_DAILY_TOMORROW);
-    localStorage.removeItem(KEY_ONBOARDING_SEEN);
-    updateShowDailyBtn();
-    disconnectFileSyncSilently();
-    disconnectCloudSyncSilently();
-    if ('indexedDB' in window) {
-      idbClear('history').catch(function () {});
+
+    function finishClear() {
+      // 徹底刪乾淨：直接 removeItem 移除 key 本身，不是照 persistAll()/saveTemplates() 那樣
+      // 把空值寫回去蓋掉——蓋掉的話 key 技術上還在（只是內容變空的），這裡要的是 key 真的消失。
+      // 之後只要有任何正常操作（新增任務等）觸發存檔，這些 key 自然會用新資料重新出現，
+      // 不需要另外處理「key 不見了程式會不會壞」——所有讀取都是走記憶體變數，不是直接讀 localStorage。
+      localStorage.removeItem(KEY_DEFS);
+      localStorage.removeItem(KEY_DAY);
+      localStorage.removeItem(KEY_HIST);
+      localStorage.removeItem(KEY_TEMPLATES);
+      localStorage.removeItem(KEY_SHOW_DAILY_TOMORROW);
+      localStorage.removeItem(KEY_ONBOARDING_SEEN);
+      updateShowDailyBtn();
+      disconnectFileSyncSilently();
+      disconnectCloudSyncSilently();
+      currentView = dayState.date;
+      scheduleDate.min = dayState.date;
+      render();
+      openWelcome(); // 回到跟第一次使用一模一樣的狀態，連歡迎畫面也一併重新跳出來
     }
-    currentView = dayState.date;
-    scheduleDate.min = dayState.date;
-    render();
-    openWelcome(); // 回到跟第一次使用一模一樣的狀態，連歡迎畫面也一併重新跳出來
+
+    // IndexedDB 的完整歷史封存要在「推播空資料給同步端」之前就清空——buildExportPayload()／
+    // buildCloudHistoryPayload() 都是從這裡讀完整歷史去組 payload，先清掉才能確保這次
+    // 推播上去的是真的清空後的狀態，不是不小心把清空前的完整歷史又送了一次。
+    var idbClearPromise = ('indexedDB' in window) ? idbClear('history').catch(function () {}) : Promise.resolve();
+
+    if (!transport) {
+      idbClearPromise.then(finishClear);
+      return;
+    }
+
+    // 借用 syncCheckInFlight 這個既有旗標擋掉「切回分頁/視窗」觸發的背景檢查
+    // （checkSyncOnFocus() → checkRemoteSyncForChanges()）——不擋的話，使用者在這幾秒
+    // 推播空資料的空檔剛好切出去又切回來，背景檢查會在 activeSyncTransport() 都還沒被
+    // disconnectXxxSilently() 清掉之前搶著跑，輕則提早呼叫 hideSyncLock() 把這次清空的
+    // 鎖定畫面收掉，重則真的抓到差異、跳出確認視窗，選「匯入」會把清空前的舊資料原封
+    // 不動地救回來——等於使用者才剛按下清空，資料就被自己觸發的背景同步復活。
+    // showSyncLock() 這顆全螢幕遮罩本身已經擋掉「使用者手動點按鈕」這條路（點不到雲端
+    // 同步設定，就不會走到 resolveSyncDiff() 那幾個手動呼叫點），唯一漏掉的是這條不需要
+    // 使用者手動操作、單靠切換分頁就會自動觸發的背景路徑，所以只需要補這一個旗標。
+    syncCheckInFlight = true;
+    showSyncLock();
+    var wipePromise = idbClearPromise.then(function () {
+      var pushes = [pushToActiveSync()];
+      if (transport.isCloud && transport.pushHistory) pushes.push(transport.pushHistory());
+      return Promise.all(pushes).then(function () { return 'done'; });
+    }).catch(function () { return 'failed'; });
+    var timeoutPromise = new Promise(function (resolve) {
+      setTimeout(function () { resolve('timeout'); }, SYNC_LOCK_TIMEOUT_MS);
+    });
+    Promise.race([wipePromise, timeoutPromise]).then(function (result) {
+      // 逾時的話 wipePromise 底下實際的推播請求還在背景跑，不會被取消——但 disconnectXxxSilently()
+      // 接下來就會把 fileHandle/cloudSyncToken 清空，之後 activeSyncTransport() 一律回傳 null，
+      // checkRemoteSyncForChanges() 自己就會因為讀不到生效中的管道而提早結束，不需要旗標繼續
+      // 擋著，這裡可以放心解除。
+      syncCheckInFlight = false;
+      hideSyncLock();
+      if (result !== 'done') {
+        alert('本機資料已清空，但同步端寫入失敗或逾時（可能離線）——同步端可能還留著清空前的舊資料，之後網路恢復可以重新連結一次同步，再選「清空資料」補一次。');
+      }
+      finishClear();
+    });
   }
-  clearDataBtn.addEventListener('click', clearAllData);
+
+  clearDataBtn.addEventListener('click', function () {
+    var transport = activeSyncTransport();
+    if (!transport) {
+      if (!confirm('清空所有任務資料？此動作無法復原，建議先「匯出備份」留一份再清空。')) return;
+      performClearAllData(false);
+      return;
+    }
+    askClearDataAction().then(function (action) {
+      if (action === 'cancel') return;
+      performClearAllData(action === 'wipe-all');
+    });
+  });
 
   /* 「明天預覽」預設只列已延期的項目（每日任務不算延期搬過去的東西，見換日邏輯一節）；
      這顆開關讓使用者自己選擇要不要在同一張卡片裡，額外列出目前所有每日任務讓明天要出現的
@@ -3049,134 +3187,137 @@
     renderTemplatesList();
   });
 
-  /* ---------- 匯入其他工具的 CSV 清單（通用欄位偵測，非特定工具專用解析器） ---------- */
+  // ---------- 匯入其他工具的 CSV 清單（通用欄位偵測，非特定工具專用解析器） ----------
+  // 目前沒有在使用，整段功能先 comment 掉（連同上面 HTML 的 csvImportBtn／csvInput／
+  // csvOverlay／csvModal，跟上面 JS 的 DOM 參照）。之後要恢復使用時，這裡跟上面那幾塊
+  // HTML/JS 要一起 uncomment，缺一塊會找不到元素而整支 script 壞掉。
 
-  function parseCSV(text) {
-    var rows = [];
-    var row = [];
-    var field = '';
-    var inQuotes = false;
-    for (var i = 0; i < text.length; i++) {
-      var c = text[i];
-      if (inQuotes) {
-        if (c === '"') {
-          if (text[i + 1] === '"') { field += '"'; i++; }
-          else inQuotes = false;
-        } else field += c;
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === ',') { row.push(field); field = ''; }
-        else if (c === '\n' || c === '\r') {
-          if (c === '\r' && text[i + 1] === '\n') i++;
-          row.push(field);
-          field = '';
-          if (row.length > 1 || row[0] !== '') rows.push(row);
-          row = [];
-        } else field += c;
-      }
-    }
-    if (field !== '' || row.length) { row.push(field); rows.push(row); }
-    return rows;
-  }
+  // function parseCSV(text) {
+  //   var rows = [];
+  //   var row = [];
+  //   var field = '';
+  //   var inQuotes = false;
+  //   for (var i = 0; i < text.length; i++) {
+  //     var c = text[i];
+  //     if (inQuotes) {
+  //       if (c === '"') {
+  //         if (text[i + 1] === '"') { field += '"'; i++; }
+  //         else inQuotes = false;
+  //       } else field += c;
+  //     } else {
+  //       if (c === '"') inQuotes = true;
+  //       else if (c === ',') { row.push(field); field = ''; }
+  //       else if (c === '\n' || c === '\r') {
+  //         if (c === '\r' && text[i + 1] === '\n') i++;
+  //         row.push(field);
+  //         field = '';
+  //         if (row.length > 1 || row[0] !== '') rows.push(row);
+  //         row = [];
+  //       } else field += c;
+  //     }
+  //   }
+  //   if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  //   return rows;
+  // }
 
-  function normalizeDateGuess(raw) {
-    if (!raw) return null;
-    var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!m) return null;
-    // 只驗證格式(\d{4}-\d{2}-\d{2})不夠——像 9999-99-99 這種格式對但不是真實日期的字串，
-    // new Date() 會把溢位的月/日靜默正規化成不相干的未來日期，不會丟錯，所以要自己驗證
-    // 建出來的日期年/月/日是否跟輸入完全一致，不一致就代表不是真實日期
-    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-    var dt = new Date(y, mo - 1, d);
-    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
-    return m[1] + '-' + m[2] + '-' + m[3];
-  }
+  // function normalizeDateGuess(raw) {
+  //   if (!raw) return null;
+  //   var m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  //   if (!m) return null;
+  //   // 只驗證格式(\d{4}-\d{2}-\d{2})不夠——像 9999-99-99 這種格式對但不是真實日期的字串，
+  //   // new Date() 會把溢位的月/日靜默正規化成不相干的未來日期，不會丟錯，所以要自己驗證
+  //   // 建出來的日期年/月/日是否跟輸入完全一致，不一致就代表不是真實日期
+  //   var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  //   var dt = new Date(y, mo - 1, d);
+  //   if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  //   return m[1] + '-' + m[2] + '-' + m[3];
+  // }
 
-  var pendingCsvImport = null;
+  // var pendingCsvImport = null;
 
-  function importCSVFile(file) {
-    var reader = new FileReader();
-    reader.onload = function () {
-      var rows = parseCSV(String(reader.result));
-      if (rows.length === 0) { alert('這個檔案是空的。'); return; }
-      var header = rows[0].map(function (h) { return h.trim().toLowerCase(); });
+  // function importCSVFile(file) {
+  //   var reader = new FileReader();
+  //   reader.onload = function () {
+  //     var rows = parseCSV(String(reader.result));
+  //     if (rows.length === 0) { alert('這個檔案是空的。'); return; }
+  //     var header = rows[0].map(function (h) { return h.trim().toLowerCase(); });
 
-      var titleIdx = -1;
-      for (var i = 0; i < header.length; i++) {
-        if (/content|title|task|name|名稱|標題/.test(header[i])) { titleIdx = i; break; }
-      }
-      if (titleIdx === -1) titleIdx = 0;
+  //     var titleIdx = -1;
+  //     for (var i = 0; i < header.length; i++) {
+  //       if (/content|title|task|name|名稱|標題/.test(header[i])) { titleIdx = i; break; }
+  //     }
+  //     if (titleIdx === -1) titleIdx = 0;
 
-      var dateIdx = -1;
-      for (var j = 0; j < header.length; j++) {
-        if (/date|due|日期/.test(header[j])) { dateIdx = j; break; }
-      }
+  //     var dateIdx = -1;
+  //     for (var j = 0; j < header.length; j++) {
+  //       if (/date|due|日期/.test(header[j])) { dateIdx = j; break; }
+  //     }
 
-      var parsed = [];
-      for (var k = 1; k < rows.length; k++) {
-        var r = rows[k];
-        var title = (r[titleIdx] || '').trim();
-        if (!title) continue;
-        var rawDate = dateIdx !== -1 ? (r[dateIdx] || '').trim() : '';
-        parsed.push({ title: title, scheduledFor: normalizeDateGuess(rawDate) });
-      }
-      if (parsed.length === 0) { alert('沒有偵測到可匯入的任務標題。'); return; }
-      showCsvPreview(parsed);
-    };
-    reader.readAsText(file);
-  }
+  //     var parsed = [];
+  //     for (var k = 1; k < rows.length; k++) {
+  //       var r = rows[k];
+  //       var title = (r[titleIdx] || '').trim();
+  //       if (!title) continue;
+  //       var rawDate = dateIdx !== -1 ? (r[dateIdx] || '').trim() : '';
+  //       parsed.push({ title: title, scheduledFor: normalizeDateGuess(rawDate) });
+  //     }
+  //     if (parsed.length === 0) { alert('沒有偵測到可匯入的任務標題。'); return; }
+  //     showCsvPreview(parsed);
+  //   };
+  //   reader.readAsText(file);
+  // }
 
-  function showCsvPreview(parsed) {
-    pendingCsvImport = parsed;
-    csvPreviewList.innerHTML = '';
-    parsed.slice(0, 50).forEach(function (row) {
-      var li = document.createElement('li');
-      li.className = 'item readonly';
-      var span = document.createElement('span');
-      span.className = 'item-title readonly';
-      span.textContent = row.title + (row.scheduledFor ? '（排程 ' + row.scheduledFor + '）' : '');
-      li.appendChild(span);
-      csvPreviewList.appendChild(li);
-    });
-    csvCount.textContent = '(' + parsed.length + ' 筆)';
-    openCsvModal();
-  }
+  // function showCsvPreview(parsed) {
+  //   pendingCsvImport = parsed;
+  //   csvPreviewList.innerHTML = '';
+  //   parsed.slice(0, 50).forEach(function (row) {
+  //     var li = document.createElement('li');
+  //     li.className = 'item readonly';
+  //     var span = document.createElement('span');
+  //     span.className = 'item-title readonly';
+  //     span.textContent = row.title + (row.scheduledFor ? '（排程 ' + row.scheduledFor + '）' : '');
+  //     li.appendChild(span);
+  //     csvPreviewList.appendChild(li);
+  //   });
+  //   csvCount.textContent = '(' + parsed.length + ' 筆)';
+  //   openCsvModal();
+  // }
 
-  function openCsvModal() {
-    csvModal.classList.add('open');
-    csvOverlay.classList.add('open');
-  }
-  function closeCsvModal() {
-    csvModal.classList.remove('open');
-    csvOverlay.classList.remove('open');
-  }
+  // function openCsvModal() {
+  //   csvModal.classList.add('open');
+  //   csvOverlay.classList.add('open');
+  // }
+  // function closeCsvModal() {
+  //   csvModal.classList.remove('open');
+  //   csvOverlay.classList.remove('open');
+  // }
 
-  csvImportBtn.addEventListener('click', function () { csvInput.click(); });
-  csvInput.addEventListener('change', function () {
-    var file = csvInput.files[0];
-    csvInput.value = '';
-    if (!file) return;
-    importCSVFile(file);
-  });
-  csvClose.addEventListener('click', closeCsvModal);
-  csvOverlay.addEventListener('click', closeCsvModal);
-  csvConfirm.addEventListener('click', function () {
-    if (!pendingCsvImport) return;
-    pendingCsvImport.forEach(function (row) {
-      var def = { id: uuid(), title: row.title, isDaily: false, createdAt: dayState.date };
-      if (row.scheduledFor && row.scheduledFor > dayState.date) {
-        def.scheduledFor = row.scheduledFor;
-        taskDefs.push(def);
-      } else {
-        taskDefs.push(def);
-        dayState.items.push({ taskId: def.id, status: 'pending' });
-      }
-    });
-    persistAll();
-    pendingCsvImport = null;
-    closeCsvModal();
-    render();
-  });
+  // csvImportBtn.addEventListener('click', function () { csvInput.click(); });
+  // csvInput.addEventListener('change', function () {
+  //   var file = csvInput.files[0];
+  //   csvInput.value = '';
+  //   if (!file) return;
+  //   importCSVFile(file);
+  // });
+  // csvClose.addEventListener('click', closeCsvModal);
+  // csvOverlay.addEventListener('click', closeCsvModal);
+  // csvConfirm.addEventListener('click', function () {
+  //   if (!pendingCsvImport) return;
+  //   pendingCsvImport.forEach(function (row) {
+  //     var def = { id: uuid(), title: row.title, isDaily: false, createdAt: dayState.date };
+  //     if (row.scheduledFor && row.scheduledFor > dayState.date) {
+  //       def.scheduledFor = row.scheduledFor;
+  //       taskDefs.push(def);
+  //     } else {
+  //       taskDefs.push(def);
+  //       dayState.items.push({ taskId: def.id, status: 'pending' });
+  //     }
+  //   });
+  //   persistAll();
+  //   pendingCsvImport = null;
+  //   closeCsvModal();
+  //   render();
+  // });
 
   /* ---------- 全域鍵盤事件 ---------- */
 
@@ -3186,9 +3327,10 @@
     else if (detailDrawer.classList.contains('open')) closeDetail();
     else if (searchModal.classList.contains('open')) closeSearch();
     else if (templatesModal.classList.contains('open')) closeTemplates();
-    else if (csvModal.classList.contains('open')) closeCsvModal();
+    // else if (csvModal.classList.contains('open')) closeCsvModal(); // CSV 匯入功能目前 comment 掉了
     else if (taskSheetModal.classList.contains('open')) closeTaskSheet();
     else if (syncConflictModal.classList.contains('open')) { if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel'); }
+    else if (clearDataModal.classList.contains('open')) { if (pendingClearDataSettle) pendingClearDataSettle('cancel'); }
     else if (shortcutsModal.classList.contains('open')) closeShortcuts();
     else if (moreMenu.classList.contains('open')) moreMenu.classList.remove('open');
   });
