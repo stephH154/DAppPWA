@@ -1083,6 +1083,12 @@
   var KEY_SHOW_DAILY_TOMORROW = 'dtc_showDailyInTomorrow';
   var KEY_ONBOARDING_SEEN = 'dtc_onboardingSeen';
   var KEY_CLOUD_SYNC_TOKEN = 'dtc_cloudSyncToken';
+  // 上一次「成功建立同步關係」的那組密鑰——同步時設定、解除同步時清掉。用來判斷
+  // 「這次連結對這組密鑰來說算不算第一次」，不能直接看 cloudSyncToken 本身是不是空的：
+  // 空的只能分辨「完全沒設定過」，分辨不出「已經連著 A，現在改連 B」這種換密鑰的情境——
+  // 換了一組新密鑰跟真正第一次連線一樣，理論上都需要抓一次雲端既有的歷史資料補回本機，
+  // 見 cloudSyncSaveBtn 那邊 pullHistoryIfCloud() 的判斷。
+  var KEY_LAST_SYNCED_CLOUD_TOKEN = 'dtc_lastSyncedCloudToken';
   // 上一次已知的同步管道「內容最後修改時間」——本機檔案是 File.lastModified，雲端是
   // Apps Script 回傳的 Drive 檔案 getLastUpdated()。切回畫面時先問這個輕量版時間戳，
   // 跟這裡存的值一樣就代表沒人動過，完全不用把整份任務資料抓下來比對、也不用鎖畫面
@@ -1262,8 +1268,10 @@
   var fileHandle = null;
   var needsReauth = false;
   var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
+  var lastSyncedCloudToken = loadJSON(KEY_LAST_SYNCED_CLOUD_TOKEN, '');
+  function saveLastSyncedCloudToken(v) { lastSyncedCloudToken = v; saveJSON(KEY_LAST_SYNCED_CLOUD_TOKEN, v); }
 
-  if (checkRollover()) pushHistoryIfCloud();
+  if (checkRollover()) pullHistoryIfCloud().then(pushHistoryIfCloud);
   persistAll();
 
   var currentView = dayState.date;
@@ -1581,7 +1589,7 @@
         idbSet('history', dateKey, dayHistory[dateKey]).catch(function () {});
       });
     }
-    if (checkRollover()) pushHistoryIfCloud();
+    if (checkRollover()) pullHistoryIfCloud().then(pushHistoryIfCloud);
     persistAll();
     currentView = dayState.date;
     scheduleDate.min = dayState.date;
@@ -2028,9 +2036,49 @@
 
   // 換日封存新的一天之後呼叫——只有雲端同步生效中才有意義（本機檔案同步整包寫，
   // 沒有分開的歷史檔案）。失敗直接吞掉，跟其他背景同步動作一樣不影響正常使用。
+  //
+  // **每個呼叫點都要寫成 pullHistoryIfCloud().then(pushHistoryIfCloud)，不能兩個並排
+  // 各自獨立呼叫**——push 建立推播內容時會重新讀一次本機 IndexedDB
+  // （mergedHistoryPromise()），這個讀取幾乎是瞬間完成的本機操作；pull 卻要先等一次
+  // 雲端網路請求才會真的把抓回來的資料寫進 IndexedDB（實測 20~30 秒）。兩個如果各自
+  // 獨立觸發不等對方，push 幾乎必然搶先完成，用「pull 還沒寫進來之前」的舊本機資料
+  // 整包蓋回雲端——等於在 pull 好不容易要把其他裝置的歷史抓下來的當下，被這次 push
+  // 反手蓋掉，其他裝置那些本機還沒有的日子就這樣從雲端消失，完全違背這兩個函式
+  // 存在的目的。這是實際發生過的 bug（review 抓到，已修正所有呼叫點），不是假設性風險。
   function pushHistoryIfCloud() {
     var transport = activeSyncTransport();
     if (transport && transport.isCloud && transport.pushHistory) transport.pushHistory();
+  }
+
+  // 換日時除了把本機新封存的那天推上去，也順便反過來抓一次雲端的歷史檔案，把雲端有
+  // 的每一天寫回本機 IndexedDB——使用者反應「各裝置的歷史資料不同步」：pushHistoryIfCloud()
+  // 原本只有單向（本機→雲端），裝置 A 換日封存過的某一天，裝置 B 如果那天沒開過 app，
+  // 永遠不會自己補上，久了每台裝置的歷史紀錄會越差越多。雲端這份一律當準——同一個
+  // token 從多台裝置寫入，本來就是「整包蓋過去、最後寫的贏」（doPost() 那邊的既有
+  // 設計，見「雲端同步」一節），這裡拉歷史資料下來比照辦理，不特別檢查本機是不是已經
+  // 有這天、內容一不一樣，抓到什麼就直接覆蓋寫進去，跟「補洞」是兩回事，是真的同步。
+  function pullHistoryIfCloud() {
+    var transport = activeSyncTransport();
+    if (!transport || !transport.isCloud || !transport.readHistoryText) return Promise.resolve();
+    if (!('indexedDB' in window)) return Promise.resolve();
+    return transport.readHistoryText().then(function (histText) {
+      var hist = null;
+      if (histText && histText.trim()) {
+        try { hist = JSON.parse(histText); } catch (e) { hist = null; }
+      }
+      var remoteHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
+      var cutoff = addDays(dayState.date, -HISTORY_RETENTION_DAYS);
+      var writes = [];
+      Object.keys(remoteHistory).forEach(function (dateKey) {
+        var snapshot = remoteHistory[dateKey];
+        writes.push(idbSet('history', dateKey, snapshot).catch(function () {}));
+        // 這天如果還落在目前顯示視窗（90 天）內，順便更新記憶體那份 dayHistory，
+        // 不用重新整理頁面就能在歷史畫面看到——只寫 IndexedDB 的話要等下次重新載入
+        // 才會反映在畫面上。
+        if (dateKey >= cutoff) dayHistory[dateKey] = snapshot;
+      });
+      return Promise.all(writes);
+    }).catch(function () { /* 抓不到就算了，不影響正常使用，下次換日還有機會再補 */ });
   }
 
   /* 選到的可能是一個已經有資料的舊檔案（例如連結另一台裝置寫過的同步檔）——
@@ -2119,6 +2167,12 @@
     localStorage.removeItem(KEY_CLOUD_SYNC_TOKEN);
     cloudSyncDisconnected = false;
     saveLastKnownSyncModified(null);
+    // 解除同步（不管是使用者主動按解除、連線失敗被拒絕、還是清空資料連帶解除）都要
+    // 把這個值一併清掉——下次不管重新連結同一組密鑰還是換一組新的，都要重新當「第一次」
+    // 處理，見 cloudSyncSaveBtn 那邊 pullHistoryIfCloud() 的判斷跟 KEY_LAST_SYNCED_CLOUD_TOKEN
+    // 上面的說明。這裡刻意不寫成只在使用者主動點「解除雲端同步」時才清——
+    // isTokenAuthorized_ 那種連線失敗也會走到這個函式，同一套清除邏輯全部適用最單純。
+    saveLastSyncedCloudToken('');
     updateCloudSyncUi();
   }
 
@@ -2156,9 +2210,21 @@
       alert('程式碼裡的 CLOUD_SYNC_URL 還是預留字串，還沒換成實際部署的 Apps Script 網址。');
       return;
     }
+    // 「對這組密鑰來說算不算第一次連線」看的是「這組密鑰跟上一次成功建立同步關係的
+    // 密鑰是不是同一組」（lastSyncedCloudToken）——不能只看 cloudSyncToken 本身是不是
+    // 空的：空的只能分辨「完全沒設定過」，分辨不出「已經連著 A，現在改連 B」這種換
+    // 密鑰的情境，換一組新密鑰跟真正第一次連線一樣，理論上都該抓一次雲端既有的歷史
+    // 補回本機。「斷線」重試（密鑰沒變，只是暫時連不上）不算——重試時 lastSyncedCloudToken
+    // 還是同一組密鑰，比對出來一樣，不會多打一次歷史抓取請求，見 disconnectCloudSyncSilently()
+    // 裡「解除同步才清掉」的說明。要在下面這行蓋掉 lastSyncedCloudToken 之前先比對。
+    var isFirstConnectForToken = (token !== lastSyncedCloudToken);
     disconnectFileSyncSilently();
     cloudSyncToken = token;
     saveJSON(KEY_CLOUD_SYNC_TOKEN, cloudSyncToken);
+    // 樂觀先存——如果這次連線後來失敗（取消／後端明確錯誤），下面對應分支會呼叫
+    // disconnectCloudSyncSilently()，那裡會把這個值一併清掉，等於連這次樂觀寫入也復原，
+    // 不會留下「明明沒連成功，卻被記成已經同步過這組密鑰」的錯誤狀態。
+    saveLastSyncedCloudToken(token);
     cloudSyncDisconnected = false;
     saveLastKnownSyncModified(null); // 換了一組密鑰,舊的「已知時間戳」是對應到別組密鑰的資料,沒有意義
     updateCloudSyncUi();
@@ -2186,10 +2252,16 @@
       if (action !== 'imported') {
         pushToActiveSync();
         // 這台裝置的資料變成這個 token 的準版本——連帶把本機歷史也推一次去雲端「補齊」
-        // 歷史檔案（可能是全新 token，雲端還沒有任何歷史檔案）。只有連結/覆蓋這個一次性
-        // 動作才這樣做，不是每次同步都推，見 buildCloudHistoryPayload()/pushHistoryIfCloud()
-        // 上面的說明。
-        pushHistoryIfCloud();
+        // 歷史檔案，見 buildCloudHistoryPayload()/pushHistoryIfCloud() 上面的說明。只有
+        // 「對這組密鑰來說是第一次連線」（isFirstConnectForToken，包含真正從沒設定過、
+        // 也包含從別組密鑰換過來這兩種情境，不是單純看斷線與否）才反過來多做一步：
+        // 先把雲端既有的歷史（如果這組 token 之前在別的裝置用過）抓下來補回本機，再
+        // 推——跟換日時的補洞邏輯共用同一個 pullHistoryIfCloud()，一定要用 .then() 串接、
+        // 不能兩個並排各自獨立呼叫，理由見 pushHistoryIfCloud() 上面的警語註解。斷線
+        // 重試（密鑰沒變，只是暫時連不上）不算，跟這個功能加之前的行為一樣，只單純
+        // 推播，不用每次重試都多打一次歷史抓取請求。
+        if (isFirstConnectForToken) pullHistoryIfCloud().then(pushHistoryIfCloud);
+        else pushHistoryIfCloud();
       }
     });
     closeCloudSyncModal();
@@ -2337,8 +2409,8 @@
       // （理論上不該發生，因為 taskDefs 跟 dayState.items 本來就該一起維護，這裡只是防呆）。
       var displayTitle = (localDef && localDef.title) || (remoteDef && remoteDef.title) || '(未知任務)';
 
-      if (localItem && !remoteItem) { points.push({ type: 'local-added', desc: displayTitle + '——只有本機新增' }); return; }
-      if (!localItem && remoteItem) { points.push({ type: 'local-missing', desc: displayTitle + '——只有雲端有這筆' }); return; }
+      if (localItem && !remoteItem) { points.push({ type: 'local-added', desc: displayTitle + '——只存在於本機' }); return; }
+      if (!localItem && remoteItem) { points.push({ type: 'local-missing', desc: displayTitle + '——只存在於雲端' }); return; }
 
       if (localItem.status !== remoteItem.status) {
         var safe = statusPairIsSafe(localItem.status, remoteItem.status);
@@ -2376,8 +2448,8 @@
       Object.keys(allSubIds).forEach(function (subId) {
         var ls = localSubsById[subId];
         var rs = remoteSubsById[subId];
-        if (ls && !rs) { points.push({ type: 'local-added', desc: displayTitle + ' 的子任務「' + ls.title + '」——只有本機新增' }); return; }
-        if (!ls && rs) { points.push({ type: 'local-missing', desc: displayTitle + ' 的子任務「' + rs.title + '」——只有雲端有這筆' }); return; }
+        if (ls && !rs) { points.push({ type: 'local-added', desc: displayTitle + ' 的子任務「' + ls.title + '」——只存在於本機' }); return; }
+        if (!ls && rs) { points.push({ type: 'local-missing', desc: displayTitle + ' 的子任務「' + rs.title + '」——只存在於雲端' }); return; }
         // 標題不同跟完成狀態不同是各自獨立的檢查（不是 else if）——跟上面頂層任務的
         // 標題/每日設定/備註檢查同一個道理，兩者剛好同時改過的話，兩筆都要各自記一筆，
         // 不能因為先抓到標題不同就 return 掉，把同時發生的狀態差異漏掉不顯示。
@@ -2693,7 +2765,7 @@
   function checkRolloverOnFocus() {
     var wasOnToday = (currentView === dayState.date);
     if (!checkRollover()) return;
-    pushHistoryIfCloud();
+    pullHistoryIfCloud().then(pushHistoryIfCloud);
     persistAll();
     // 使用者當下如果本來就停在「今天」畫面，換日後把 currentView 一起推進到新的今天，
     // 不然畫面會停在舊日期、卻因為那天已經被封存進 dayHistory 而突然變成唯讀快照，
