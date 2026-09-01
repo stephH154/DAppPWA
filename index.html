@@ -466,6 +466,22 @@
   .detail-chevron:hover { color: var(--ink); }
   .detail-chevron.has-note { color: var(--red); }
 
+  /* 📅 加到行事曆彈窗——兩顆按鈕文字都是「加到行事曆」，只靠圖示/顏色分 iOS／Android，
+     .reco 是疊加的 UA 判斷推薦樣式（粗框＋徽章），偵測失敗或猜錯時另一顆還是完整可按，
+     不影響功能，只影響「哪顆比較粗」。 */
+  .cal-btn-sub { display: block; font-size: 10.5px; font-weight: 400; opacity: .7; margin-top: 2px; }
+  .choice-btn.cal-ios, .choice-btn.cal-android {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .choice-btn.cal-ios { border-color: var(--ink); }
+  .choice-btn.cal-android { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+  .choice-btn.reco { border-width: 2px; }
+  .choice-btn.reco::after {
+    content: "建議"; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--ink); color: var(--card); flex-shrink: 0;
+  }
+  .choice-btn.cal-android.reco::after { background: var(--green); }
+
   .empty-msg { color: var(--muted); font-size: 13px; padding: 28px 0 12px; text-align: center; }
   .empty-msg .icon { font-size: 24px; display: block; margin-bottom: 8px; opacity: .55; }
 
@@ -554,6 +570,8 @@
   .mini-btn.mini-remove:hover { background: var(--red-soft); border-color: var(--red); }
   .mini-btn.mini-undo { color: var(--ink); }
   .mini-btn.mini-undo:hover { background: var(--bg); border-color: var(--ink); }
+  .mini-btn.mini-cal { color: var(--ink); }
+  .mini-btn.mini-cal:hover { background: var(--bg); border-color: var(--ink); }
 
   .undo-row .item-title { font-style: italic; }
 
@@ -702,6 +720,30 @@
     transition: height .08s ease;
   }
   .detail-note:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .detail-reminder-row { display: flex; align-items: center; gap: 8px; }
+  .detail-reminder-row input[type="time"] {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 10px;
+  }
+  .detail-reminder-row input[type="time"]:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .detail-reminder-clear {
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--red);
+    border-radius: 8px;
+    padding: 6px 9px;
+    cursor: pointer;
+    flex-shrink: 0;
+    font-size: 12px;
+    display: inline-flex;
+  }
+  .detail-reminder-clear:hover { background: var(--red-soft); border-color: var(--red); }
 
   .shortcuts-modal {
     position: fixed;
@@ -808,6 +850,10 @@
     .swipe-content .tag-toggle,
     .swipe-content .defer-btn,
     .swipe-content .detail-chevron { display: none; }
+
+    /* 手機版不顯示提醒時間設定——手機背景推播不可靠，設定了也大多不會準時跳出來，
+       這裡只保留「📅 加到行事曆」交給系統原生提醒機制（見 spec）。 */
+    #detailReminderLabel, #detailReminderRow { display: none; }
 
     /* 子任務的「改名字」（雙擊）「移除」（hover 才浮現）在手機下都不可靠，
        同樣收進「⋯」動作選單，跟頂層任務列同一個做法 */
@@ -926,6 +972,16 @@
   <div class="detail-meta" id="detailMeta"></div>
   <div class="detail-label">備註</div>
   <textarea class="detail-note" id="detailNote" placeholder="加一點備註…"></textarea>
+  <!-- 提醒時間跟備註放同一個側欄——原本另外做一顆常駐 🔔 圖示，範本任務（子任務展開）
+       那一列已經很擠，再塞一顆變得太擁擠，改成收在備註側欄下面，只在按鈕本身用鈴鐺圖案
+       表示「這筆有設定提醒」（見下面 detailBtn 的 textContent 邏輯）。手機版不顯示這塊
+       （見手機版 media query）——手機背景推播不可靠，這裡只保留「加到行事曆」。 -->
+  <div class="detail-label" id="detailReminderLabel">🔔 提醒時間</div>
+  <div class="detail-reminder-row" id="detailReminderRow">
+    <input type="time" id="detailReminderInput">
+    <button type="button" class="detail-reminder-clear" id="detailReminderClear" title="取消提醒" aria-label="取消提醒" style="display:none">✕</button>
+  </div>
+  <div class="detail-meta" id="detailReminderStatus"></div>
 </aside>
 
 <div class="detail-overlay" id="welcomeOverlay"></div>
@@ -1071,6 +1127,22 @@
   <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
     <button type="button" class="choice-btn primary" id="cloudSyncSaveBtn">儲存並連結</button>
     <button type="button" class="choice-btn danger" id="cloudSyncDisconnectBtn" style="display:none">解除雲端同步</button>
+  </div>
+</div>
+
+<div class="detail-overlay" id="calendarOverlay"></div>
+<div class="shortcuts-modal" id="calendarModal">
+  <div class="detail-head">
+    <div class="shortcuts-title">📅 加到行事曆</div>
+    <button class="round-btn" id="calendarClose" title="關閉" aria-label="關閉">×</button>
+  </div>
+  <div class="detail-meta" id="calendarTaskTitle" style="margin-top:6px"></div>
+  <div class="detail-meta" id="calendarDateLabel"></div>
+  <label class="detail-meta" for="calendarTimeInput" style="margin-top:10px;display:block">時間（可留空＝整天事件，日期照任務本身的日期，這裡不用選）</label>
+  <input type="time" id="calendarTimeInput" class="search-input" style="margin-top:6px">
+  <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+    <button type="button" class="choice-btn cal-ios" id="calendarIcsBtn"><span>🍎 加到行事曆<span class="cal-btn-sub">.ics · Apple／Outlook</span></span></button>
+    <button type="button" class="choice-btn cal-android" id="calendarGoogleBtn"><span>🤖 加到行事曆<span class="cal-btn-sub">Google 日曆</span></span></button>
   </div>
 </div>
 
@@ -1326,6 +1398,14 @@
   var cloudSyncTokenInput = document.getElementById('cloudSyncTokenInput');
   var cloudSyncSaveBtn = document.getElementById('cloudSyncSaveBtn');
   var cloudSyncDisconnectBtn = document.getElementById('cloudSyncDisconnectBtn');
+  var calendarOverlay = document.getElementById('calendarOverlay');
+  var calendarModal = document.getElementById('calendarModal');
+  var calendarClose = document.getElementById('calendarClose');
+  var calendarTaskTitle = document.getElementById('calendarTaskTitle');
+  var calendarDateLabel = document.getElementById('calendarDateLabel');
+  var calendarTimeInput = document.getElementById('calendarTimeInput');
+  var calendarIcsBtn = document.getElementById('calendarIcsBtn');
+  var calendarGoogleBtn = document.getElementById('calendarGoogleBtn');
   var taskSheetOverlay = document.getElementById('taskSheetOverlay');
   var taskSheetModal = document.getElementById('taskSheetModal');
   var taskSheetTitle = document.getElementById('taskSheetTitle');
@@ -1337,6 +1417,9 @@
   var detailTitle = document.getElementById('detailTitle');
   var detailMeta = document.getElementById('detailMeta');
   var detailNote = document.getElementById('detailNote');
+  var detailReminderInput = document.getElementById('detailReminderInput');
+  var detailReminderClear = document.getElementById('detailReminderClear');
+  var detailReminderStatus = document.getElementById('detailReminderStatus');
   var shortcutsBtn = document.getElementById('shortcutsBtn');
   var welcomeOverlay = document.getElementById('welcomeOverlay');
   var welcomeModal = document.getElementById('welcomeModal');
@@ -1430,6 +1513,15 @@
 
       var actions = document.createElement('div');
       actions.className = 'tomorrow-actions';
+
+      // 已排程沒有「⋯」選單（整列是 readonly，只有取消一個動作）——這裡的任務本來就都
+      // 帶明確的未來日期，值得省掉「先開⋯選單」那一步，直接常駐一顆快速入口。
+      var calBtn = document.createElement('button');
+      calBtn.className = 'mini-btn mini-cal';
+      calBtn.textContent = '📅';
+      calBtn.title = '加到行事曆';
+      calBtn.onclick = function () { openCalendarModal(def); };
+      actions.appendChild(calBtn);
 
       var cancelBtn = document.createElement('button');
       cancelBtn.className = 'mini-btn mini-remove';
@@ -2395,37 +2487,16 @@
     var statusLabel = { pending: '待處理', done: '已完成', deferred: '已延期' };
     function statusText(s) { return statusLabel[s] || s; }
 
-    var allTaskIds = {};
-    Object.keys(localItemsById).forEach(function (id) { allTaskIds[id] = true; });
-    Object.keys(remoteItemsById).forEach(function (id) { allTaskIds[id] = true; });
-
-    Object.keys(allTaskIds).forEach(function (taskId) {
-      var localItem = localItemsById[taskId];
-      var remoteItem = remoteItemsById[taskId];
-      var localDef = localDefsById[taskId];
-      var remoteDef = remoteDefsById[taskId];
-      // 「顯示差異」清單裡要秀任務標題——local-added/local-missing 這兩種情況下，
-      // 兩邊的 taskDefs 不一定都有這筆，挑存在的那一份取標題，都沒有就顯示佔位字串
-      // （理論上不該發生，因為 taskDefs 跟 dayState.items 本來就該一起維護，這裡只是防呆）。
-      var displayTitle = (localDef && localDef.title) || (remoteDef && remoteDef.title) || '(未知任務)';
-
-      if (localItem && !remoteItem) { points.push({ type: 'local-added', desc: displayTitle + '——只存在於本機' }); return; }
-      if (!localItem && remoteItem) { points.push({ type: 'local-missing', desc: displayTitle + '——只存在於雲端' }); return; }
-
-      if (localItem.status !== remoteItem.status) {
-        var safe = statusPairIsSafe(localItem.status, remoteItem.status);
-        points.push({
-          type: safe ? 'status-flip' : 'other',
-          desc: displayTitle + '——完成狀態不同（本機：' + statusText(localItem.status) + '／雲端：' + statusText(remoteItem.status) + '）'
-        });
-      }
-
-      if (!localDef || !remoteDef) return;
-
+    // 標題/每日設定/備註/子任務的欄位比對——「今天」清單裡的任務跟下面「已排程」清單裡的
+    // 任務共用同一段邏輯，差別只在有沒有 status 可比（已排程任務還沒變成 dayState.items
+    // 裡的一筆，沒有 status），抽成共用函式，不在兩個迴圈裡各寫一次。
+    function compareDefAndSubtasks(localDef, remoteDef, displayTitle, includeScheduledFor) {
       var changedFields = [];
       if (localDef.title !== remoteDef.title) changedFields.push('標題');
+      if (includeScheduledFor && localDef.scheduledFor !== remoteDef.scheduledFor) changedFields.push('排程日期');
       if (!!localDef.isDaily !== !!remoteDef.isDaily) changedFields.push('每日設定');
       if ((localDef.note || '') !== (remoteDef.note || '')) changedFields.push('備註');
+      if ((localDef.reminderTime || '') !== (remoteDef.reminderTime || '')) changedFields.push('提醒時間');
       if (changedFields.length) {
         points.push({ type: 'other', desc: displayTitle + '——' + changedFields.join('/') + '不同' });
       }
@@ -2464,6 +2535,64 @@
           });
         }
       });
+    }
+
+    var allTaskIds = {};
+    Object.keys(localItemsById).forEach(function (id) { allTaskIds[id] = true; });
+    Object.keys(remoteItemsById).forEach(function (id) { allTaskIds[id] = true; });
+
+    Object.keys(allTaskIds).forEach(function (taskId) {
+      var localItem = localItemsById[taskId];
+      var remoteItem = remoteItemsById[taskId];
+      var localDef = localDefsById[taskId];
+      var remoteDef = remoteDefsById[taskId];
+      // 「顯示差異」清單裡要秀任務標題——local-added/local-missing 這兩種情況下，
+      // 兩邊的 taskDefs 不一定都有這筆，挑存在的那一份取標題，都沒有就顯示佔位字串
+      // （理論上不該發生，因為 taskDefs 跟 dayState.items 本來就該一起維護，這裡只是防呆）。
+      var displayTitle = (localDef && localDef.title) || (remoteDef && remoteDef.title) || '(未知任務)';
+
+      if (localItem && !remoteItem) { points.push({ type: 'local-added', desc: displayTitle + '——只存在於本機' }); return; }
+      if (!localItem && remoteItem) { points.push({ type: 'local-missing', desc: displayTitle + '——只存在於雲端' }); return; }
+
+      if (localItem.status !== remoteItem.status) {
+        var safe = statusPairIsSafe(localItem.status, remoteItem.status);
+        points.push({
+          type: safe ? 'status-flip' : 'other',
+          desc: displayTitle + '——完成狀態不同（本機：' + statusText(localItem.status) + '／雲端：' + statusText(remoteItem.status) + '）'
+        });
+      }
+
+      if (!localDef || !remoteDef) return;
+      compareDefAndSubtasks(localDef, remoteDef, displayTitle, false);
+    });
+
+    // 「已排程」任務（taskDefs 裡帶 scheduledFor、還沒被 rollover 排進 dayState.items 的
+    // 那些）本來完全不在上面這個迴圈的比對範圍內——上面只看 dayState.items 兩邊有沒有這個
+    // taskId，已排程任務要等排定日期到了才會出現在那裡。這不是刻意排除（不像 dayHistory
+    // 的排除有明確理由寫在旁邊），是這個功能一開始沒考慮到「今天」跟「歷史」中間還有
+    // 「已排程」這個第三種狀態，是真正的疏漏，這裡補上：新增/移除/改名/改期都要能顯示。
+    var localScheduledById = {};
+    taskDefs.forEach(function (d) { if (d.scheduledFor) localScheduledById[d.id] = d; });
+    var remoteScheduledById = {};
+    (Array.isArray(remote.taskDefs) ? remote.taskDefs : []).filter(Boolean).forEach(function (d) { if (d.scheduledFor) remoteScheduledById[d.id] = d; });
+
+    var allScheduledIds = {};
+    Object.keys(localScheduledById).forEach(function (id) { allScheduledIds[id] = true; });
+    Object.keys(remoteScheduledById).forEach(function (id) { allScheduledIds[id] = true; });
+
+    Object.keys(allScheduledIds).forEach(function (taskId) {
+      // 理論上不會同時出現在這裡跟上面的 allTaskIds——scheduledFor 在 rollover 排進
+      // dayState.items 的同一時間就會被刪掉（見 checkRollover() 附近的邏輯），這裡只是
+      // 防呆，避免萬一資料不一致時同一筆重複計入兩次。
+      if (allTaskIds[taskId]) return;
+      var localDef = localScheduledById[taskId];
+      var remoteDef = remoteScheduledById[taskId];
+      var displayTitle = '已排程「' + ((localDef && localDef.title) || (remoteDef && remoteDef.title) || '(未知任務)') + '」';
+
+      if (localDef && !remoteDef) { points.push({ type: 'local-added', desc: displayTitle + '——只存在於本機' }); return; }
+      if (!localDef && remoteDef) { points.push({ type: 'local-missing', desc: displayTitle + '——只存在於雲端' }); return; }
+
+      compareDefAndSubtasks(localDef, remoteDef, displayTitle, true);
     });
 
     // 「📦 範本」管理視窗裡的範本清單（templates 陣列）跟上面「已經套用出去、taskDefs
@@ -2894,6 +3023,179 @@
     };
     taskSheetList.appendChild(btn);
   }
+  /* ---------- 提醒時間（🔔）與加到行事曆（📅） ----------
+     提醒時間存在 taskDef.reminderTime（"HH:MM" 字串，沒設定就是 undefined）——理由跟
+     def.note 一樣：這是任務本身的屬性，不是當天狀態，rollover 不會碰它，每日任務每天
+     都在同一個時間提醒。因為存在 taskDefs 上，會跟著既有的同步機制整包一起同步過去，
+     不用另外處理——手機上設定的提醒時間，同步到桌面裝置之後就能真的收到系統通知。 */
+
+  var firedReminderIds = {}; // taskId -> 上次觸發提醒時的 dayState.date，換日後日期對不上就能再次觸發
+
+  // 直接把 Notification.permission 現在的狀態秀在備註側欄裡——不用開 DevTools 才知道
+  // 「設定了提醒為什麼沒跳通知」是因為瀏覽器根本沒給權限，還是單純還沒到時間。
+  // 用 file:// 直接開這個檔案測試時，Chrome 對本機檔案的權限記憶跟網址列圖示的行為
+  // 常常跟透過 https 網址開的正式版不一樣（例如網址列不一定有可以查看/重設權限的圖示），
+  // 這裡沒辦法在程式碼裡繞過瀏覽器本身的限制——如果這行一直卡在「尚未允許」不會變成
+  // 「已允許」，換成部署出去的網址（或本機起一個 http://localhost 的靜態伺服器）測試看看，
+  // 那才是跟正式使用環境一致的條件。
+  function notificationStatusLabel() {
+    if (!('Notification' in window)) return '這個瀏覽器不支援桌面通知，「加到行事曆」不受影響。';
+    if (Notification.permission === 'granted') return '通知：已允許。';
+    if (Notification.permission === 'denied') return '通知：已封鎖——瀏覽器網址列的鎖頭/資訊圖示通常可以重設，或改用下面的「加到行事曆」。';
+    return '通知：尚未允許——填時間之後瀏覽器會詢問，要按「允許」才會真的跳通知。';
+  }
+  function refreshReminderStatus() {
+    detailReminderStatus.textContent = notificationStatusLabel();
+  }
+  function requestNotificationPermissionIfNeeded() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(refreshReminderStatus);
+    }
+  }
+
+  function checkReminders() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    var now = new Date();
+    var nowStr = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' + (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+    dayState.items.forEach(function (it) {
+      if (it.status !== 'pending') return;
+      var def = getDef(it.taskId);
+      if (!def || !def.reminderTime) return;
+      if (firedReminderIds[it.taskId] === dayState.date) return; // 今天已經提醒過這筆
+      if (def.reminderTime > nowStr) return; // 時間還沒到
+      firedReminderIds[it.taskId] = dayState.date;
+      try {
+        new Notification('每日任務日曆', {
+          body: '還沒完成「' + def.title + '」，現在 ' + nowStr + ' 了',
+          icon: './icon-192.png',
+          tag: 'dtc-reminder-' + it.taskId
+        });
+      } catch (e) {
+        // 部分瀏覽器（例如手機版 Chrome）不支援直接 new Notification()，要求走 Service
+        // Worker 的 showNotification()——這裡靜默失敗即可，提醒本來就是加分，不是關鍵功能。
+      }
+    });
+  }
+  setInterval(checkReminders, 30000);
+
+  // ---- 加到行事曆：.ics 下載 + Google 日曆連結，兩顆都給，UA 判斷只影響推薦樣式 ----
+
+  function detectPreferredCalendarPlatform() {
+    var ua = navigator.userAgent || '';
+    if (/iPhone|iPad|iPod/.test(ua)) return 'ios';
+    if (/Android/.test(ua)) return 'android';
+    return null;
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function icsLocalStamp(d) {
+    return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
+  }
+  function icsUtcStamp(d) {
+    return d.getUTCFullYear() + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate()) + 'T' + pad2(d.getUTCHours()) + pad2(d.getUTCMinutes()) + pad2(d.getUTCSeconds()) + 'Z';
+  }
+  function escapeIcsText(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  }
+
+  // 這支 app 本來就「刻意不處理時區位移」（見 spec）——DTSTART/DTEND 一律寫成沒有 TZID／
+  // 沒有 Z 尾碼的浮動本地時間，跟大部分行事曆 app 對「使用者自己輸入的活動時間」的預設
+  // 解讀一致，不特別做時區轉換。
+  function buildIcsText(title, dateStr, timeStr) {
+    var uid = 'dtc-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '@daily-task-calendar';
+    var lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//daily-task-calendar//zh-TW', 'BEGIN:VEVENT', 'UID:' + uid, 'DTSTAMP:' + icsUtcStamp(new Date())];
+    if (timeStr) {
+      var start = new Date(dateStr + 'T' + timeStr + ':00');
+      var end = new Date(start.getTime() + 60 * 60 * 1000);
+      lines.push('DTSTART:' + icsLocalStamp(start));
+      lines.push('DTEND:' + icsLocalStamp(end));
+    } else {
+      lines.push('DTSTART;VALUE=DATE:' + dateStr.replace(/-/g, ''));
+      lines.push('DTEND;VALUE=DATE:' + addDays(dateStr, 1).replace(/-/g, ''));
+    }
+    lines.push('SUMMARY:' + escapeIcsText(title));
+    lines.push('END:VEVENT');
+    lines.push('END:VCALENDAR');
+    return lines.join('\r\n');
+  }
+
+  function triggerIcsDownload(icsText, filename) {
+    var blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    // 故意不設 download 屬性——iOS Safari 對沒有 download 屬性、mime 是 text/calendar 的
+    // 連結會直接跳原生「新增至行事曆」預覽；Android/桌面通常還是會走下載，兩邊都能用，
+    // 只是體驗有落差（示意圖階段已經跟使用者確認過這個取捨，見 spec）。
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function gcalStamp(d) {
+    return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + pad2(d.getMinutes()) + '00';
+  }
+  function buildGoogleCalendarUrl(title, dateStr, timeStr) {
+    var startStr, endStr;
+    if (timeStr) {
+      var start = new Date(dateStr + 'T' + timeStr + ':00');
+      var end = new Date(start.getTime() + 60 * 60 * 1000);
+      startStr = gcalStamp(start);
+      endStr = gcalStamp(end);
+    } else {
+      startStr = dateStr.replace(/-/g, '');
+      endStr = addDays(dateStr, 1).replace(/-/g, '');
+    }
+    return 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(title) + '&dates=' + startStr + '/' + endStr;
+  }
+
+  function safeFileName(title) {
+    return (title || 'task').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) + '.ics';
+  }
+
+  var currentCalendarDef = null;
+  function closeCalendarModal() {
+    calendarModal.classList.remove('open');
+    calendarOverlay.classList.remove('open');
+    currentCalendarDef = null;
+  }
+  function openCalendarModal(def) {
+    currentCalendarDef = def;
+    var dateStr = def.scheduledFor || dayState.date;
+    calendarTaskTitle.textContent = def.title;
+    calendarDateLabel.textContent = '日期：' + scheduleLabel(dateStr);
+    calendarTimeInput.value = def.reminderTime || '';
+
+    // UA 判斷只影響「哪顆比較粗」，不影響顯示哪顆——猜錯或偵測失敗，兩顆都還在，
+    // 使用者自己按另一顆就好，不會卡住（見 spec 的示意圖確認紀錄）。
+    calendarIcsBtn.classList.remove('reco');
+    calendarGoogleBtn.classList.remove('reco');
+    var platform = detectPreferredCalendarPlatform();
+    if (platform === 'ios') calendarIcsBtn.classList.add('reco');
+    else if (platform === 'android') calendarGoogleBtn.classList.add('reco');
+
+    calendarModal.classList.add('open');
+    calendarOverlay.classList.add('open');
+  }
+  calendarClose.addEventListener('click', closeCalendarModal);
+  calendarOverlay.addEventListener('click', closeCalendarModal);
+  calendarIcsBtn.addEventListener('click', function () {
+    if (!currentCalendarDef) return;
+    var dateStr = currentCalendarDef.scheduledFor || dayState.date;
+    var icsText = buildIcsText(currentCalendarDef.title, dateStr, calendarTimeInput.value);
+    triggerIcsDownload(icsText, safeFileName(currentCalendarDef.title));
+    closeCalendarModal();
+  });
+  calendarGoogleBtn.addEventListener('click', function () {
+    if (!currentCalendarDef) return;
+    var dateStr = currentCalendarDef.scheduledFor || dayState.date;
+    window.open(buildGoogleCalendarUrl(currentCalendarDef.title, dateStr, calendarTimeInput.value), '_blank', 'noopener');
+    closeCalendarModal();
+  });
+
   function openTaskActionSheet(it, def, titleEl, opts) {
     opts = opts || {};
     var isDone = it.status === 'done';
@@ -2932,6 +3234,7 @@
     }
 
     addSheetAction(def.note ? '備註（已填寫）' : '備註', null, function () { openDetail(def); });
+    addSheetAction('📅 加到行事曆', null, function () { openCalendarModal(def); });
 
     if (!isDone) {
       addSheetAction('移除', 'danger', function () { scheduleRemoval(it); });
@@ -3029,6 +3332,9 @@
     detailTitle.textContent = def.title;
     detailMeta.textContent = (def.isDaily ? '每日任務 · ' : '一次性任務 · ') + '建立於 ' + def.createdAt;
     detailNote.value = def.note || '';
+    detailReminderInput.value = def.reminderTime || '';
+    detailReminderClear.style.display = def.reminderTime ? 'inline-flex' : 'none';
+    refreshReminderStatus();
     detailDrawer.classList.add('open');
     detailOverlay.classList.add('open');
     autoGrowNote();
@@ -3041,6 +3347,29 @@
     detailOverlay.classList.remove('open');
     render();
   }
+
+  // 提醒時間跟備註不一樣，不需要防抖——<input type="time"> 只在使用者真的選定/確認一個
+  // 值時才觸發 change，不像文字框每敲一下鍵盤就觸發 input。跟備註一樣故意不在這裡立刻
+  // render()，等使用者關閉側欄時 closeDetail() 自然會 render() 一次，行為跟備註完全對齊。
+  detailReminderInput.addEventListener('change', function () {
+    if (!currentDetailDef) return;
+    var v = detailReminderInput.value;
+    if (v) {
+      currentDetailDef.reminderTime = v;
+      requestNotificationPermissionIfNeeded();
+    } else {
+      delete currentDetailDef.reminderTime;
+    }
+    detailReminderClear.style.display = v ? 'inline-flex' : 'none';
+    persistAll();
+  });
+  detailReminderClear.addEventListener('click', function () {
+    if (!currentDetailDef) return;
+    delete currentDetailDef.reminderTime;
+    detailReminderInput.value = '';
+    detailReminderClear.style.display = 'none';
+    persistAll();
+  });
 
   detailNote.addEventListener('input', function () {
     autoGrowNote();
@@ -3614,6 +3943,7 @@
     else if (taskSheetModal.classList.contains('open')) closeTaskSheet();
     else if (syncConflictModal.classList.contains('open')) { if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel'); }
     else if (clearDataModal.classList.contains('open')) { if (pendingClearDataSettle) pendingClearDataSettle('cancel'); }
+    else if (calendarModal.classList.contains('open')) closeCalendarModal();
     else if (shortcutsModal.classList.contains('open')) closeShortcuts();
     else if (moreMenu.classList.contains('open')) moreMenu.classList.remove('open');
   });
@@ -3974,8 +4304,8 @@
 
     var detailBtn = document.createElement('button');
     detailBtn.className = 'detail-chevron' + (def.note ? ' has-note' : '');
-    detailBtn.textContent = '›';
-    detailBtn.title = '詳細資料 / 備註';
+    detailBtn.textContent = def.reminderTime ? '🔔' : '›';
+    detailBtn.title = def.reminderTime ? ('詳細資料 / 備註（提醒 ' + def.reminderTime + '）') : '詳細資料 / 備註';
     detailBtn.onclick = function (e) {
       e.stopPropagation();
       openDetail(def);
@@ -4254,8 +4584,8 @@
 
       var detailBtn = document.createElement('button');
       detailBtn.className = 'detail-chevron' + (def.note ? ' has-note' : '');
-      detailBtn.textContent = '›';
-      detailBtn.title = '詳細資料 / 備註';
+      detailBtn.textContent = def.reminderTime ? '🔔' : '›';
+      detailBtn.title = def.reminderTime ? ('詳細資料 / 備註（提醒 ' + def.reminderTime + '）') : '詳細資料 / 備註';
       detailBtn.onclick = function (e) {
         e.stopPropagation();
         openDetail(def);
