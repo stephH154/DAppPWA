@@ -732,6 +732,19 @@
     padding: 7px 10px;
   }
   .detail-reminder-row input[type="time"]:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .detail-reminder-confirm {
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: var(--card);
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+  }
+  .detail-reminder-confirm:hover { opacity: .85; }
   .detail-reminder-clear {
     border: 1px solid var(--border);
     background: var(--card);
@@ -979,6 +992,7 @@
   <div class="detail-label" id="detailReminderLabel">🔔 提醒時間</div>
   <div class="detail-reminder-row" id="detailReminderRow">
     <input type="time" id="detailReminderInput">
+    <button type="button" class="detail-reminder-confirm" id="detailReminderConfirm">確認</button>
     <button type="button" class="detail-reminder-clear" id="detailReminderClear" title="取消提醒" aria-label="取消提醒" style="display:none">✕</button>
   </div>
   <div class="detail-meta" id="detailReminderStatus"></div>
@@ -1418,6 +1432,7 @@
   var detailMeta = document.getElementById('detailMeta');
   var detailNote = document.getElementById('detailNote');
   var detailReminderInput = document.getElementById('detailReminderInput');
+  var detailReminderConfirm = document.getElementById('detailReminderConfirm');
   var detailReminderClear = document.getElementById('detailReminderClear');
   var detailReminderStatus = document.getElementById('detailReminderStatus');
   var shortcutsBtn = document.getElementById('shortcutsBtn');
@@ -3348,10 +3363,11 @@
     render();
   }
 
-  // 提醒時間跟備註不一樣，不需要防抖——<input type="time"> 只在使用者真的選定/確認一個
-  // 值時才觸發 change，不像文字框每敲一下鍵盤就觸發 input。跟備註一樣故意不在這裡立刻
-  // render()，等使用者關閉側欄時 closeDetail() 自然會 render() 一次，行為跟備註完全對齊。
-  detailReminderInput.addEventListener('change', function () {
+  // 存檔動作綁在「確認」按鈕上，不是 <input type="time"> 的 change 事件——原本靠 change
+  // 隱含存檔，使用者填完時間沒有明確的動作可以按，不確定到底存了沒有；改成要點一下
+  // 「確認」才算數，跟備註一樣故意不在這裡立刻 render()，等使用者關閉側欄時
+  // closeDetail() 自然會 render() 一次，行為跟備註完全對齊。
+  detailReminderConfirm.addEventListener('click', function () {
     if (!currentDetailDef) return;
     var v = detailReminderInput.value;
     if (v) {
