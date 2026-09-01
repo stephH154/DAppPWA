@@ -401,6 +401,7 @@
   .tag-deferred { color: var(--red); background: var(--red-soft); }
   .tag-pending { color: var(--muted); background: var(--card); }
   .tag-streak { color: #a5780f; background: #f6ecd3; }
+  .tag-reminder { color: var(--green); background: var(--green-soft); }
 
   .tag-toggle {
     cursor: pointer;
@@ -745,6 +746,7 @@
     font-family: inherit;
   }
   .detail-reminder-confirm:hover { opacity: .85; }
+  .detail-reminder-confirm.done { border-color: var(--green); background: var(--green); }
   .detail-reminder-clear {
     border: 1px solid var(--border);
     background: var(--card);
@@ -3065,14 +3067,41 @@
   function requestNotificationPermissionIfNeeded() {
     if (!('Notification' in window)) return;
     if (Notification.permission === 'default') {
-      Notification.requestPermission().then(refreshReminderStatus);
+      Notification.requestPermission().then(function () {
+        refreshReminderStatus();
+        updateReminderConfirmState();
+      });
     }
+  }
+
+  function currentTimeStr() {
+    var now = new Date();
+    return (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' + (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+  }
+  // 「這個任務今天還算有效的提醒」——時間有設定、瀏覽器真的允許通知、而且還沒到/超過那個
+  // 時間點。列上的 🔔 標籤、備註側欄「確認」按鈕的「已設定」狀態都共用這個判斷，確保兩處
+  // 顯示邏輯隨時對得起來，不會列上還顯示已設定、側欄卻已經打回確認。時間一過就不算「有效」，
+  // 使用者原話「通知過期把已設定按鈕還原成原樣」——不清掉 def.reminderTime 本身（每日任務
+  // 明天同一個時間還是要繼續提醒），只是這個「還在等待」的視覺狀態過期就收回去。
+  function isReminderActive(def) {
+    if (!def || !def.reminderTime) return false;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return false;
+    return def.reminderTime > currentTimeStr();
+  }
+
+  // 「確認」按鈕的成功狀態一樣看 isReminderActive()——只存了時間、瀏覽器還沒真的允許通知，
+  // 按鈕維持「確認」；允許之後變成「已設定」；時間過期後自動打回「確認」，不需要使用者
+  // 自己意識到「已經過期了，其實現在按下去也還是同一個狀態」。
+  function updateReminderConfirmState() {
+    var active = isReminderActive(currentDetailDef);
+    detailReminderConfirm.textContent = active ? '✓ 已設定' : '確認';
+    detailReminderConfirm.classList.toggle('done', active);
   }
 
   function checkReminders() {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    var now = new Date();
-    var nowStr = (now.getHours() < 10 ? '0' : '') + now.getHours() + ':' + (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+    var nowStr = currentTimeStr();
+    var firedAny = false;
     dayState.items.forEach(function (it) {
       if (it.status !== 'pending') return;
       var def = getDef(it.taskId);
@@ -3080,6 +3109,7 @@
       if (firedReminderIds[it.taskId] === dayState.date) return; // 今天已經提醒過這筆
       if (def.reminderTime > nowStr) return; // 時間還沒到
       firedReminderIds[it.taskId] = dayState.date;
+      firedAny = true;
       try {
         new Notification('每日任務日曆', {
           body: '還沒完成「' + def.title + '」，現在 ' + nowStr + ' 了',
@@ -3091,6 +3121,8 @@
         // Worker 的 showNotification()——這裡靜默失敗即可，提醒本來就是加分，不是關鍵功能。
       }
     });
+    // 過期的提醒要讓列上的 🔔 標籤立刻收回去，不等到下次剛好因為別的操作觸發 render()。
+    if (firedAny) render();
   }
   setInterval(checkReminders, 30000);
 
@@ -3350,6 +3382,7 @@
     detailReminderInput.value = def.reminderTime || '';
     detailReminderClear.style.display = def.reminderTime ? 'inline-flex' : 'none';
     refreshReminderStatus();
+    updateReminderConfirmState();
     detailDrawer.classList.add('open');
     detailOverlay.classList.add('open');
     autoGrowNote();
@@ -3378,6 +3411,7 @@
     }
     detailReminderClear.style.display = v ? 'inline-flex' : 'none';
     persistAll();
+    updateReminderConfirmState();
   });
   detailReminderClear.addEventListener('click', function () {
     if (!currentDetailDef) return;
@@ -3385,6 +3419,7 @@
     detailReminderInput.value = '';
     detailReminderClear.style.display = 'none';
     persistAll();
+    updateReminderConfirmState();
   });
 
   detailNote.addEventListener('input', function () {
@@ -4305,6 +4340,14 @@
       }
     }
 
+    if (!isDone && isReminderActive(def)) {
+      var reminderTag = document.createElement('span');
+      reminderTag.className = 'tag tag-reminder';
+      reminderTag.textContent = '🔔 ' + def.reminderTime;
+      reminderTag.title = '已設定通知：' + def.reminderTime;
+      content.appendChild(reminderTag);
+    }
+
     if (!isDone) {
       var deferBtn = document.createElement('button');
       deferBtn.className = 'defer-btn';
@@ -4320,8 +4363,8 @@
 
     var detailBtn = document.createElement('button');
     detailBtn.className = 'detail-chevron' + (def.note ? ' has-note' : '');
-    detailBtn.textContent = def.reminderTime ? '🔔' : '›';
-    detailBtn.title = def.reminderTime ? ('詳細資料 / 備註（提醒 ' + def.reminderTime + '）') : '詳細資料 / 備註';
+    detailBtn.textContent = '›';
+    detailBtn.title = '詳細資料 / 備註';
     detailBtn.onclick = function (e) {
       e.stopPropagation();
       openDetail(def);
@@ -4585,6 +4628,14 @@
         }
       }
 
+      if (!isDone && isReminderActive(def)) {
+        var reminderTag = document.createElement('span');
+        reminderTag.className = 'tag tag-reminder';
+        reminderTag.textContent = '🔔 ' + def.reminderTime;
+        reminderTag.title = '已設定通知：' + def.reminderTime;
+        content.appendChild(reminderTag);
+      }
+
       if (!isDone) {
         var deferBtn = document.createElement('button');
         deferBtn.className = 'defer-btn';
@@ -4600,8 +4651,8 @@
 
       var detailBtn = document.createElement('button');
       detailBtn.className = 'detail-chevron' + (def.note ? ' has-note' : '');
-      detailBtn.textContent = def.reminderTime ? '🔔' : '›';
-      detailBtn.title = def.reminderTime ? ('詳細資料 / 備註（提醒 ' + def.reminderTime + '）') : '詳細資料 / 備註';
+      detailBtn.textContent = '›';
+      detailBtn.title = '詳細資料 / 備註';
       detailBtn.onclick = function (e) {
         e.stopPropagation();
         openDetail(def);
