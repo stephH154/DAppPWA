@@ -1163,6 +1163,27 @@
 </div>
 
 <script>
+// 安全網：整支 app 是一個大 IIFE，開機流程（換日封存、讀資料、掛事件）任何一行沒接住的
+// 例外，都會讓畫面卡在「靜態 HTML 骨架＋沒有任何動態內容/事件」的狀態——標題日期是空的
+// （HTML 裡 #dateMain 本來就是空 div，靠 JS 填）、任務清單是空的（同理）、按鈕按了沒反應
+// （addEventListener 那幾行從沒執行到）。這種情況使用者端完全看不到任何錯誤訊息，回報
+// 「壞掉了」也沒辦法進一步定位問題。這裡掛一個全域 error handler，最先註冊、搶在 app 自己
+// 的程式碼之前，只要開機流程任何地方丟出沒被接住的例外，就直接把錯誤內容畫在畫面上，
+// 使用者截圖回報就能精準定位，不用臆測。刻意只用最原始的 DOM API（不呼叫 app 自己的任何
+// 函式），因為會走到這裡代表 app 本身的程式碼已經不可信任了。
+window.addEventListener('error', function (e) {
+  try {
+    if (document.getElementById('dtcCrashBanner')) return; // 只顯示第一個錯誤，避免疊一堆
+    var msg = (e && e.error && e.error.stack) ? e.error.stack : ((e && e.message) || String(e));
+    var box = document.createElement('div');
+    box.id = 'dtcCrashBanner';
+    box.style.cssText = 'position:fixed;inset:0;background:#2c2a22;color:#f7f3e7;'
+      + 'font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;padding:20px;'
+      + 'overflow:auto;z-index:999999;white-space:pre-wrap;word-break:break-word;';
+    box.textContent = '⚠️ 每日任務發生錯誤，畫面可能沒有正常顯示。\n請把這整段文字截圖傳回去：\n\n' + msg;
+    document.body.appendChild(box);
+  } catch (e2) { /* 連錯誤畫面都畫不出來就放棄，不能在這裡再丟一次例外 */ }
+});
 (function () {
   var KEY_DEFS = 'dtc_taskDefs';
   var KEY_DAY = 'dtc_dayState';
