@@ -153,7 +153,9 @@
   }
   @media (max-width: 600px) {
     .dual { grid-template-columns: 1fr; }
-    .dual-col + .dual-col { border-left: none; padding-left: 0; border-top: 1px dashed var(--border); padding-top: 12px; }
+    .dual-col:first-child { display: none; }
+    .dual-col + .dual-col { border-left: none; padding-left: 0; border-top: none; padding-top: 0; }
+    .dual-col:last-child .dual-label { display: none; }
   }
 
   .swipe-demo { position: relative; overflow: hidden; border-radius: 10px; }
