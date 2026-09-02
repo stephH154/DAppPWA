@@ -1379,6 +1379,21 @@ window.addEventListener('error', function (e) {
   var cloudSyncToken = loadJSON(KEY_CLOUD_SYNC_TOKEN, '');
   var lastSyncedCloudToken = loadJSON(KEY_LAST_SYNCED_CLOUD_TOKEN, '');
   function saveLastSyncedCloudToken(v) { lastSyncedCloudToken = v; saveJSON(KEY_LAST_SYNCED_CLOUD_TOKEN, v); }
+  // CLOUD_SYNC_URL 同一個理由也要提前到這裡宣告——這支常數原本宣告在後面「自動同步本機
+  // 檔案」那個區塊裡（見那邊留的位置說明），但 pullHistoryIfCloud() 底下的
+  // cloudSyncFetchHistoryText() 會同步讀它組網址字串。手機 PWA 真的跨過午夜換日的那次
+  // 實測直接證實了這個問題：TypeError: Cannot read properties of undefined (reading
+  // 'indexOf')，因為這裡呼叫的當下，後面那行 CLOUD_SYNC_URL 賦值敘述根本還沒執行到——
+  // 跟這三個變數當初提前宣告的原因一模一樣，只是這次踩到的是換日封存「歷史抓取」那條路徑，
+  // 不是「歷史推播」那條，兩者是不同函式但读的是同一顆地雷。
+  var CLOUD_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec';
+  // CLOUD_SYNC_TIMEOUT_MS 也要一起搬——cloudFetch() 在同一條 pullHistoryIfCloud() 呼叫鏈
+  // 裡會同步讀它設定 AbortController 的逾時毫秒數。這個沒有 CLOUD_SYNC_URL 那麼戲劇化
+  // （undefined 傳進 setTimeout 不會丟例外，瀏覽器只是當成 0 處理），但效果一樣糟：
+  // 逾時變成 0 秒，等於這個請求還沒發出去就被自己中斷，跟真的斷線是一樣的結果——
+  // 換日開機那次的歷史抓取會靜默失敗，沒有任何錯誤訊息，只是抓不到資料。原本的宣告位置
+  // 跟完整的「6 秒 → 20 秒」實測背景說明留在後面 cloudFetch() 定義旁邊，這裡只搬賦值本身。
+  var CLOUD_SYNC_TIMEOUT_MS = 20000;
 
   if (checkRollover()) pullHistoryIfCloud().then(pushHistoryIfCloud);
   persistAll();
@@ -1898,18 +1913,13 @@ window.addEventListener('error', function (e) {
   /* ---------- 自動同步本機檔案（File System Access API，僅 Chromium 系瀏覽器） ---------- */
 
   var FS_SUPPORTED = 'showSaveFilePicker' in window && 'showOpenFilePicker' in window && 'indexedDB' in window;
-  // fileHandle／needsReauth／cloudSyncToken 已經提前到檔案開頭（換日封存那段）宣告，
-  // 理由見那邊的註解——這裡不再重複宣告，避免同一個變數兩個地方各宣告一次容易搞混。
+  // fileHandle／needsReauth／cloudSyncToken／CLOUD_SYNC_URL 已經提前到檔案開頭
+  // （換日封存那段）宣告，理由見那邊的註解——這裡不再重複宣告，避免同一個變數兩個地方
+  // 各宣告一次容易搞混。要換 Apps Script 部署網址的話，去改最前面那份宣告，不是這裡。
   // 雲端同步（Google Apps Script Web App）——跟本機同步檔案是「兩選一」的關係，同一時間
   // 只會有一種在生效（見 activeSyncTransport()），不會兩邊同時寫。手機瀏覽器不支援
   // File System Access API，但 fetch() 到一個網址不需要任何特殊瀏覽器能力，這條路線
   // 是唯一手機也能用的自動同步方式。
-  //
-  // 網址直接寫死在程式碼裡——這是「我自己的」個人工具，只有我自己會設定同步，不是給
-  // 陌生使用者各自填自己網址的產品；寫死之後每台裝置只需要輸入 TOKEN，不用每次都找那串
-  // 又長又難記的 script.google.com 網址複製貼上。部署好 Apps Script 之後把下面這行換成
-  // 實際拿到的網址（daily-task-cloud-sync-apps-script.txt 裡的部署步驟第 7 步）。
-  var CLOUD_SYNC_URL = 'https://script.google.com/macros/s/AKfycbw7VZTYBZCUsMojHzGNMXy-Gz5tPuOHdilQiFmaYTjxaEGviRBTLYig0rbIH0CBPfjsLQ/exec';
   var lastKnownSyncModified = loadJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, null);
   function saveLastKnownSyncModified(v) { lastKnownSyncModified = v; saveJSON(KEY_LAST_KNOWN_SYNC_MODIFIED, v); }
   // 雲端同步這次檢查/推播是不是失敗（逾時、離線、後端錯誤）——只在記憶體，重新整理頁面
@@ -2034,8 +2044,8 @@ window.addEventListener('error', function (e) {
   // 提到的平台特性一致）。6 秒的逾時比實際回應時間短，等於每一次請求都還沒得到後端真正的
   // 回應就被主動中斷，「雲端同步（斷線）」因此變成幾乎每次都會觸發的常態，不是真的斷線。
   // 拉長到 20 秒，讓大多數正常但慢的請求有機會真的等到回應，只有真的連不上（離線/逾時
-  // 更久）才會被判定斷線。
-  var CLOUD_SYNC_TIMEOUT_MS = 20000;
+  // 更久）才會被判定斷線。實際的 CLOUD_SYNC_TIMEOUT_MS 賦值已經提前到檔案開頭
+  // （換日封存那段）宣告，理由見那邊的註解，這裡不重複宣告。
   // fetch() 本身沒有內建逾時——網路離線或訊號差時，request 可能整個吊在那裡不 resolve
   // 也不 reject，永遠等不到結果。用 AbortController 手動設一個逾時，時間到了主動中斷，
   // 這樣才會確實觸發 catch，讓上層知道「這次連不上」，可以標記斷線狀態、跳提示。
