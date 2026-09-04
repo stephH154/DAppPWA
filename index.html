@@ -1350,6 +1350,12 @@ window.addEventListener('error', function (e) {
     saveJSON(KEY_DEFS, taskDefs);
     saveJSON(KEY_DAY, dayState);
     saveJSON(KEY_HIST, dayHistory);
+    // suppressNextPush 只有開機當下、剛好又跨過午夜換日、又有生效中的雲端同步時才會是
+    // true（見開機那段 if (checkRollover()) 旁邊的說明）——本機這幾行存檔還是照跑，
+    // 攔的只有這一次的雲端推播，換日剛把每日任務清成全新的「今天」，不能不先跟雲端比對
+    // 就直接蓋上去，不然雲端上別的裝置今天已經打勾的完成狀態會被這次推播悄悄蓋掉。
+    // 只消費一次：讀到就立刻歸位，之後任何呼叫（包含這次呼叫鏈裡巢狀呼叫到的）都正常推播。
+    if (suppressNextPush) { suppressNextPush = false; return; }
     pushToActiveSync();
   }
 
@@ -1395,7 +1401,22 @@ window.addEventListener('error', function (e) {
   // 跟完整的「6 秒 → 20 秒」實測背景說明留在後面 cloudFetch() 定義旁邊，這裡只搬賦值本身。
   var CLOUD_SYNC_TIMEOUT_MS = 20000;
 
-  if (checkRollover()) pullHistoryIfCloud().then(pushHistoryIfCloud);
+  // 換日當下如果剛好有生效中的同步管道，下面這次 persistAll() 不能無腦推播——見
+  // suppressNextPush／justRolledOverToday 旁邊的完整說明（那兩顆是這個 bug 的修法，
+  // 不是原本就有的）。這裡只先記錄「這次開機是不是真的換日了」跟「換日當下要不要攔下
+  // 這次推播」，實際處理邏輯留給 persistAll() 跟開機尾端的 checkRemoteSyncAfterRollover()。
+  var justRolledOverToday = false;
+  var suppressNextPush = false;
+  if (checkRollover()) {
+    pullHistoryIfCloud().then(pushHistoryIfCloud);
+    justRolledOverToday = true;
+    // activeSyncTransport() 這裡只讀得到雲端同步（cloudSyncToken 在上面已經同步賦值）——
+    // 本機同步檔案的 fileHandle 要等後面 idbGet('handles','linked') 那個非同步 IndexedDB
+    // 讀取完成才會有值，這個時間點永遠是 null，所以這裡攔不到本機檔案同步那條路；但那條
+    // 路本來就沒有這個 bug（它是等 fileHandle 就緒、DOM 也準備好之後才呼叫
+    // checkRemoteSyncForChanges()，不會像這裡一樣提早無腦推播），不需要一起攔。
+    if (activeSyncTransport()) suppressNextPush = true;
+  }
   persistAll();
 
   var currentView = dayState.date;
@@ -2894,6 +2915,71 @@ window.addEventListener('error', function (e) {
     });
   }
 
+  // 換日當下如果雲端已經先一步被別的裝置推成同一天，代表當天可能已經有進度——這裡跟
+  // 上面一般的 checkRemoteSyncForChanges() 分開處理，開機遇到「這次真的換日了」要改叫
+  // 這個函式。根因：checkRemoteSyncForChanges() 靠比對「雲端有沒有變過」的輕量版時間戳
+  // 短路，換日當下如果沿用它、又先讓 persistAll() 無腦推播一次（見 suppressNextPush 那段
+  // 說明），推播完 lastKnownSyncModified 會被同一次推播自己更新掉，之後這個時間戳比對
+  // 永遠抓不到差異，整個比對機制對換日這個情境形同虛設——使用者原話「有時候每天第一次
+  // 刷新 app 時，不會去判斷雲端上每日任務完成狀態的差異而是直接把換日全空的每日任務推
+  // 上去」，就是這個根因。
+  //
+  // 只讀一次雲端內容，判斷「遠端的 dayState.date 是不是也已經是今天」：
+  // - 不是（遠端還停在舊的一天，或讀不到／格式不對）——沒有東西好比較，直接把剛換日的
+  //   內容推上去，跟原本行為一致，這是最常見的情況（只有這台裝置換日，沒有人比我早）。
+  // - 是（遠端也已經是今天）——代表已經有別的裝置動過今天的資料，這時候才值得跑完整的
+  //   差異比對（resolveSyncDiff），讓它自己決定要不要跳三選一。這個 date 判斷是必要的：
+  //   classifySyncDiff() 本身完全不比較 .date，如果不先擋掉「今天 vs 昨天」這種跨日比較，
+  //   每一個每日任務的 pending/done 差異都會被誤判成「外部改動」，變成每天早上開機都跳
+  //   一次沒有意義的確認視窗——這不是假設性風險，是動手前就先確認過 classifySyncDiff()
+  //   的比對範圍完全不看日期才發現的。
+  function checkRemoteSyncAfterRollover() {
+    var transport = activeSyncTransport();
+    if (!transport) return Promise.resolve();
+    // 已經有另一次檢查在飛（例如剛好跟 checkSyncOnFocus() 前後腳搶上）就不要在這裡搶著
+    // 推播——這裡如果跟前一版一樣「搶不到就直接 pushToActiveSync()」，等於在完全沒讀過
+    // 遠端內容的情況下把剛換日的空清單推上去，剛好是這個函式本來要擋住的那個 bug，只是
+    // 換一個觸發路徑重新踩一次。安全的作法是什麼都不做，讓正在飛的那次檢查自己跑完；這台
+    // 裝置剛換日的內容最遲會在使用者下一個正常操作（打勾/新增）觸發 persistAll() 時推播
+    // 出去，不會遺失，只是慢一點點。
+    if (syncCheckInFlight) return Promise.resolve();
+    syncCheckInFlight = true;
+    showSyncLock();
+    var checkPromise = transport.readText().then(function (text) {
+      var remote = null;
+      if (text && text.trim()) {
+        try { remote = JSON.parse(text); } catch (e) { remote = null; }
+      }
+      // 後端回傳 { error: 'unauthorized' }/{ error: 'busy' } 這種形狀時 JSON.parse 不會
+      // 失敗，remote 是個合法物件只是沒有 dayState/taskDefs——跟 resolveSyncDiff() 裡
+      // 同一段檢查一樣的理由：不擋掉的話會被下面「沒有 dayState 就當遠端還沒換日」那條
+      // 分支誤吞，把一次真正的後端錯誤當成「安全，直接推播」處理掉。
+      if (remote && remote.error) return;
+      if (remote && remote.dayState && remote.dayState.date === dayState.date) {
+        return resolveSyncDiff('先不處理，維持本機資料').then(function (action) {
+          if (action === 'overwrite') { pushToActiveSync(); return; }
+          if (action === 'cancel') {
+            // resolveSyncDiff() 本身在使用者選「取消」時不會更新 lastKnownSyncModified
+            // （那是它的正常行為，交給呼叫端決定）——checkRemoteSyncForChanges() 每次都會
+            // 存一次，這裡如果不比照，切回分頁時的輕量版檢查會拿同一個已經問過的舊時間戳
+            // 再問一次一模一樣的差異。這裡只是盡量而為，讀失敗就算了，不影響正常使用。
+            transport.readMeta().then(saveLastKnownSyncModified).catch(function () {});
+          }
+        });
+      }
+      pushToActiveSync();
+    }).catch(function () {
+      // 讀不到就跟原本行為一致，直接推播剛換日的內容，不影響正常使用
+      pushToActiveSync();
+    }).then(function () {
+      syncCheckInFlight = false;
+    });
+    var timeoutPromise = new Promise(function (resolve) { setTimeout(resolve, SYNC_LOCK_TIMEOUT_MS); });
+    return Promise.race([checkPromise, timeoutPromise]).then(function () {
+      hideSyncLock();
+    });
+  }
+
   updateCloudSyncUi(); // 開機就反映目前雲端同步狀態（已連結的話按鈕圖示要一開始就顯示綠色，不用等使用者自己點開設定視窗才看得到）
 
   if (FS_SUPPORTED) {
@@ -2910,8 +2996,12 @@ window.addEventListener('error', function (e) {
     }).catch(function () {});
   } else if (activeSyncTransport()) {
     // 手機瀏覽器不支援 File System Access（FS_SUPPORTED 是 false），但雲端同步只是
-    // fetch()，跟這個 API 完全無關——如果已經設定過雲端同步，開機一樣要檢查一次
-    checkRemoteSyncForChanges();
+    // fetch()，跟這個 API 完全無關——如果已經設定過雲端同步，開機一樣要檢查一次。
+    // justRolledOverToday 才呼叫 checkRemoteSyncAfterRollover()（見那個函式旁邊的完整
+    // 說明）——這條路徑正是 suppressNextPush 攔下推播的那個分支，換日當下 cloudSyncToken
+    // 本來就已經同步賦值，activeSyncTransport() 讀得到，是這個 bug 唯一真正會發生的地方。
+    if (justRolledOverToday) checkRemoteSyncAfterRollover();
+    else checkRemoteSyncForChanges();
   }
 
   // 開機檢查只在頁面剛載入那一刻跑一次，分頁開著、切去別的分頁或別的裝置/使用者寫過同步
@@ -2943,7 +3033,17 @@ window.addEventListener('error', function (e) {
     var wasOnToday = (currentView === dayState.date);
     if (!checkRollover()) return;
     pullHistoryIfCloud().then(pushHistoryIfCloud);
+    // 這裡是「切回分頁/視窗剛好跨過午夜」換日的路徑，跟開機那次是同一個 bug 的另一個
+    // 觸發點（甚至更常見——手機 PWA 背景喚醒本來就常常發生在早上打開手機的當下）：不能
+    // 讓 persistAll() 無腦推播剛換日的空狀態，見開機那段 suppressNextPush／
+    // checkRemoteSyncAfterRollover() 旁邊的完整說明。這裡不用另外借用 justRolledOverToday
+    // 那個開機專用旗標——所有函式跟 DOM 參照這個時間點都已經就緒，直接原地呼叫
+    // checkRemoteSyncAfterRollover() 就好，不需要像開機那樣分成「先記旗標、後面才有機會
+    // 呼叫」兩段。
+    var hasTransport = !!activeSyncTransport();
+    if (hasTransport) suppressNextPush = true;
     persistAll();
+    if (hasTransport) checkRemoteSyncAfterRollover();
     // 使用者當下如果本來就停在「今天」畫面，換日後把 currentView 一起推進到新的今天，
     // 不然畫面會停在舊日期、卻因為那天已經被封存進 dayHistory 而突然變成唯讀快照，
     // 使用者什麼都沒做，畫面卻從可互動變唯讀，會很困惑。如果使用者本來就是在瀏覽過去
