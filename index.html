@@ -1280,7 +1280,12 @@ window.addEventListener('error', function (e) {
         title: def ? def.title : '(已刪除的任務)',
         isDaily: def ? !!def.isDaily : false,
         status: it.status,
-        note: def && def.note ? def.note : ''
+        note: def && def.note ? def.note : '',
+        // 同步重構「歷史封存也要能合併」那一節加的——沒有這個時間戳，pullHistoryIfCloud()
+        // 沒辦法判斷「這台裝置封存的版本」跟「遠端已經有的版本」哪個該贏，只能整包互相
+        // 覆蓋，見規格文件。直接沿用 it.updatedAt（活資料上的時間戳），沒被 touch() 過的
+        // 項目（例如換日機械式帶過來、當天沒人動過）就是 undefined，合併時當成最舊處理。
+        updatedAt: it.updatedAt || 0
       };
       // 子任務的完成狀態存在 def.subtasks 上（活的、跨天共用），rollover() 換日時會把它們
       // 重設回 pending 給明天用——archiveDay 一定要在那個重設「之前」（見 rollover() 呼叫順序）
@@ -2235,10 +2240,11 @@ window.addEventListener('error', function (e) {
   // 換日時除了把本機新封存的那天推上去，也順便反過來抓一次雲端的歷史檔案，把雲端有
   // 的每一天寫回本機 IndexedDB——使用者反應「各裝置的歷史資料不同步」：pushHistoryIfCloud()
   // 原本只有單向（本機→雲端），裝置 A 換日封存過的某一天，裝置 B 如果那天沒開過 app，
-  // 永遠不會自己補上，久了每台裝置的歷史紀錄會越差越多。雲端這份一律當準——同一個
-  // token 從多台裝置寫入，本來就是「整包蓋過去、最後寫的贏」（doPost() 那邊的既有
-  // 設計，見「雲端同步」一節），這裡拉歷史資料下來比照辦理，不特別檢查本機是不是已經
-  // 有這天、內容一不一樣，抓到什麼就直接覆蓋寫進去，跟「補洞」是兩回事，是真的同步。
+  // 永遠不會自己補上，久了每台裝置的歷史紀錄會越差越多。
+  // 本機同一天如果已經有紀錄，不是雲端整包蓋過去——「誰先完成換日→pull→push 誰就贏」
+  // 這個問題本身後來被使用者抓到（同步機制重構沒處理到歷史封存這塊），修法是逐 taskId
+  // 合併（`mergeHistorySnapshot()`），見規格「歷史封存『誰先換日誰說了算』」一節；本機
+  // 從沒記錄過的那天才會直接採用雲端版本，見下面 pullHistoryIfCloud() 的實際寫法。
   function pullHistoryIfCloud() {
     var transport = activeSyncTransport();
     if (!transport || !transport.isCloud || !transport.readHistoryText) return Promise.resolve();
@@ -2250,14 +2256,21 @@ window.addEventListener('error', function (e) {
       }
       var remoteHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
       var cutoff = addDays(dayState.date, -HISTORY_RETENTION_DAYS);
-      var writes = [];
-      Object.keys(remoteHistory).forEach(function (dateKey) {
-        var snapshot = remoteHistory[dateKey];
-        writes.push(idbSet('history', dateKey, snapshot).catch(function () {}));
-        // 這天如果還落在目前顯示視窗（90 天）內，順便更新記憶體那份 dayHistory，
-        // 不用重新整理頁面就能在歷史畫面看到——只寫 IndexedDB 的話要等下次重新載入
-        // 才會反映在畫面上。
-        if (dateKey >= cutoff) dayHistory[dateKey] = snapshot;
+      // 本機同一天如果已經有紀錄（例如這台裝置自己剛封存過），不能直接拿遠端的整包蓋過去——
+      // 誰先完成「換日→pull→push」誰就贏，跟本機那份完不完整無關，見 mergeHistorySnapshot()
+      // 上面的說明。改成逐一讀本機既有的版本，有的話合併，沒有的話（本機從沒記錄過這天）
+      // 才直接採用遠端的。
+      var writes = Object.keys(remoteHistory).map(function (dateKey) {
+        var remoteSnapshot = remoteHistory[dateKey];
+        return idbGet('history', dateKey).then(function (localSnapshot) {
+          var finalSnapshot = localSnapshot ? mergeHistorySnapshot(localSnapshot, remoteSnapshot) : remoteSnapshot;
+          return idbSet('history', dateKey, finalSnapshot).then(function () {
+            // 這天如果還落在目前顯示視窗（90 天）內，順便更新記憶體那份 dayHistory，
+            // 不用重新整理頁面就能在歷史畫面看到——只寫 IndexedDB 的話要等下次重新載入
+            // 才會反映在畫面上。
+            if (dateKey >= cutoff) dayHistory[dateKey] = finalSnapshot;
+          });
+        }).catch(function () {});
       });
       return Promise.all(writes);
     }).catch(function () { /* 抓不到就算了，不影響正常使用，下次換日還有機會再補 */ });
@@ -2571,6 +2584,28 @@ window.addEventListener('error', function (e) {
   // 範本刪除比任務刪除少見很多，這次重構範圍先不做到底，兩個 removed 集合傳空陣列即可。
   function templatesDiffer(a, b) {
     return a.name !== b.name || JSON.stringify(a.subtaskTitles || []) !== JSON.stringify(b.subtaskTitles || []);
+  }
+  // dayHistory 快照裡的一筆——跟 defsDiffer 不同，這裡比的是「那天封存下來的樣子」整包
+  // 欄位（title/isDaily/status/note/subtasks），不是活的任務定義，見 mergeHistorySnapshot()。
+  function historyItemDiffer(a, b) {
+    if (a.title !== b.title) return true;
+    if (!!a.isDaily !== !!b.isDaily) return true;
+    if (a.status !== b.status) return true;
+    if ((a.note || '') !== (b.note || '')) return true;
+    if (JSON.stringify(a.subtasks || []) !== JSON.stringify(b.subtasks || [])) return true;
+    return false;
+  }
+  // 換日時「誰先完成換日→pull→push，誰的版本就是那天的定案」——這是同步重構沒處理到的
+  // 一塊：archiveDay() 把封存動作寫進 IndexedDB 之後，pullHistoryIfCloud() 原本是遠端有
+  // 什麼就整包覆蓋本機同一天的紀錄，不管本機剛封存的版本是不是更完整（例如公司電腦當天
+  // 只是第二個換日的裝置，自己剛封存的版本立刻被手機更早推播的版本蓋掉，公司電腦當天
+  // 實際做的事完全沒機會進到歷史紀錄）。修法：跟 dayState.items 用同一套 mergeById，
+  // 只是這裡沒有 tombstone 概念（歷史封存的項目不會被「刪除」，只會被覆蓋，兩個 removed
+  // 集合傳空陣列）。
+  function mergeHistorySnapshot(localSnapshot, remoteSnapshot) {
+    var localItems = (localSnapshot && Array.isArray(localSnapshot.items)) ? localSnapshot.items : [];
+    var remoteItems = (remoteSnapshot && Array.isArray(remoteSnapshot.items)) ? remoteSnapshot.items : [];
+    return { items: mergeById(localItems, remoteItems, 'taskId', [], [], historyItemDiffer).list };
   }
   function mergeRemovedIds(a, b) {
     var byId = {};
@@ -4847,6 +4882,7 @@ window.addEventListener('error', function (e) {
         removeBtn.title = '關掉「每日」屬性——任務本身還在，只是之後不會再自動每天出現';
         removeBtn.onclick = function () {
           def.isDaily = false;
+          touch(def);
           persistAll();
           render();
         };
