@@ -2142,8 +2142,9 @@ window.addEventListener('error', function (e) {
     });
   }
 
-  // 只有使用者真的選「雲端覆蓋本機」時才會呼叫一次（見 resolveSyncConflict()）——平常的
-  // 合併比對／熱路徑推播都不需要歷史資料，見 computeMerge() 從來不比對 dayHistory。
+  // 只有換日封存新的一天、或雲端同步「第一次連這組密鑰」時才會呼叫一次（見
+  // pullHistoryIfCloud() 的呼叫點）——平常的合併比對／熱路徑推播都不需要歷史資料，
+  // 見 computeMerge() 從來不比對 dayHistory。
   function cloudSyncFetchHistoryText() {
     if (!cloudSyncToken) return Promise.reject(new Error('未設定雲端同步'));
     var url = CLOUD_SYNC_URL + (CLOUD_SYNC_URL.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(cloudSyncToken) + '&part=history';
@@ -2272,7 +2273,11 @@ window.addEventListener('error', function (e) {
           });
         }).catch(function () {});
       });
-      return Promise.all(writes);
+      // 上面每一天只改了記憶體裡的 dayHistory 物件本身，沒有寫回 localStorage（KEY_HIST）——
+      // 開機時 dayHistory 是從 localStorage 讀回來的（見 var dayHistory = loadJSON(KEY_HIST, {})），
+      // 只改記憶體的話，這次抓回來的歷史撐不過一次重新整理。使用者實測回報「走雲端、刷新後
+      // 還是一樣沒有歷史資料」正是這裡漏掉的：全部寫完之後補存一次，讓這次更新真的留得住。
+      return Promise.all(writes).then(function () { saveJSON(KEY_HIST, dayHistory); });
     }).catch(function () { /* 抓不到就算了，不影響正常使用，下次換日還有機會再補 */ });
   }
 
