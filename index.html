@@ -2441,6 +2441,12 @@ window.addEventListener('error', function (e) {
     closeCloudSyncModal();
   });
 
+  // 跟 resolveSyncConflict() 同一個政策：完全信任 updatedAt，不跳窗問要選哪邊——原本這裡
+  // 只看「檔案看起來有沒有資料」就決定要不要跳三選一，跟本機自己是不是空的、內容跟檔案
+  // 是不是其實一樣完全無關；現在直接用 computeMerge() 靜默套用，本機是空的、或本機跟
+  // 檔案內容一樣時自然什麼都不會變（每個 id 都落在「只有一邊有」那個分支，或者
+  // differs() 判斷內容相同），檔案是空的/格式不對時 computeMerge 也不會被呼叫，直接
+  // 沿用原本的本機資料往下寫入，行為跟以前「action === 'local'」一致。
   function finishLinkingHandle(handle) {
     return handle.getFile().then(function (file) {
       return file.text();
@@ -2449,23 +2455,18 @@ window.addEventListener('error', function (e) {
       if (text && text.trim()) {
         try { existing = JSON.parse(text); } catch (e) { existing = null; }
       }
-
       var hasRealData = existing && existing.dayState && Array.isArray(existing.taskDefs);
-      var decision = hasRealData ? askSyncConflictAction(handle.name, '不設定同步') : Promise.resolve('local');
+      if (hasRealData) {
+        applyMergedResult(computeMerge(existing));
+        render();
+      }
 
-      return decision.then(function (action) {
-        if (action === 'cancel') return; /* 什麼都不做，不連結、不寫入 */
-        if (action === 'remote') applyImportedData(existing);
-        if (action === 'merge') { applyMergedResult(computeMerge(existing)); render(); }
-        /* action === 'local'：不動本機資料，直接往下走，讓 writeToLinkedFile() 把這裡的資料寫進檔案 */
-
-        disconnectCloudSyncSilently(); // 跟雲端同步互斥，連結本機檔案就自動解除雲端那邊
-        fileHandle = handle;
-        needsReauth = false;
-        idbSet('handles', 'linked', handle);
-        updateSyncBtn();
-        writeToLinkedFile();
-      });
+      disconnectCloudSyncSilently(); // 跟雲端同步互斥，連結本機檔案就自動解除雲端那邊
+      fileHandle = handle;
+      needsReauth = false;
+      idbSet('handles', 'linked', handle);
+      updateSyncBtn();
+      writeToLinkedFile();
     });
   }
 
@@ -2653,20 +2654,24 @@ window.addEventListener('error', function (e) {
     scheduleDate.min = dayState.date;
   }
 
-  /* 讀遠端資料、跟本機合併；只有「同一個活著的 id 兩邊值真的不同」才跳三選一
-     （合併／用本機覆蓋雲端／用雲端覆蓋本機／取消），純新增/純刪除直接靜默套用合併結果。
-     回傳一個 Promise resolve 成 'merged' / 'imported' / 'overwrite' / 'no-diff' /
-     'cancel' 五種結果之一——沿用舊版 'imported'/'overwrite'/'cancel'/'no-diff' 的
-     命名，呼叫端原本「action !== 'imported' 就要推播」之類的判斷不用跟著改；'merged'
-     是新增的結果，呼叫端要記得跟 'overwrite' 一起判斷成「需要推播」。 */
+  /* 讀遠端資料、跟本機合併，然後直接套用——完全信任 updatedAt，不再跳三選一問使用者。
+     使用者明確決定的：這支工具只有一個人跨自己的裝置用，不會有「不同人搶同一個 token」
+     這種真的需要人工判斷孰先孰後的情境；加上 updatedAt 從使用者第一個動作就開始記錄、
+     完全不依賴同不同步（見規格「同步機制重構」一節），值得完全信任，不用每次都停下來問。
+     computeMerge() 的 ambiguous 判斷還在算（合併邏輯本身沒變，只是不再拿這個結果決定
+     要不要跳窗）——askSyncConflictAction()／syncConflictModal 那組 HTML/CSS/JS 保留，
+     只是目前沒有任何呼叫點會用到；之後想恢復「同一個活著的 id 兩邊值真的不同就跳窗問」
+     的行為，把 if (merge.ambiguous) { ...hideSyncLock/askSyncConflictAction... } 這段
+     邏輯接回來就好，不用重寫，見上一輪的版本。
+     回傳 'merged'（合併完成，呼叫端要推播）／'no-diff'（遠端讀不到或格式不對）／
+     'remote-error:xxx'（後端明確錯誤）三種結果——沿用舊字串慣例，呼叫端「action !==
+     'imported' 就要推播」之類的判斷本來就把 'merged' 當成需要推播處理，不用跟著改。
+     cancelLabel 參數保留但目前用不到（三選一視窗不再跳出來），是為了呼叫端簽名不用跟著
+     動，之後恢復跳窗行為時也不用重新加回來。 */
   function resolveSyncConflict(cancelLabel) {
     var transport = activeSyncTransport();
     if (!transport) return Promise.resolve('no-diff');
-    return Promise.all([
-      transport.readText(),
-      transport.readMeta().catch(function () { return null; })
-    ]).then(function (results) {
-      var text = results[0], remoteModified = results[1];
+    return transport.readText().then(function (text) {
       var remote = null;
       if (text && text.trim()) {
         try { remote = JSON.parse(text); } catch (e) { remote = null; }
@@ -2677,59 +2682,9 @@ window.addEventListener('error', function (e) {
       if (remote && remote.error) return 'remote-error:' + remote.error;
       if (!remote || !remote.dayState || !Array.isArray(remote.taskDefs)) return 'no-diff';
 
-      var merge = computeMerge(remote);
-      if (!merge.ambiguous) {
-        applyMergedResult(merge);
-        render();
-        return 'merged';
-      }
-
-      // 真的要跳確認視窗了——先把「同步中」鎖定畫面收起來，不然它的 z-index 比這個對話框
-      // 高，會蓋住對話框的按鈕，變成看得到但點不到。這個對話框本身就是一個會擋住操作的
-      // modal，接手鎖定畫面的責任，不需要兩層 overlay 疊在一起。
-      hideSyncLock();
-      return askSyncConflictAction(transport.label, cancelLabel).then(function (action) {
-        if (action === 'cancel') {
-          if (remoteModified != null) markSynced(remoteModified);
-          return 'cancel';
-        }
-        if (action === 'merge') {
-          applyMergedResult(merge);
-          render();
-          return 'merged';
-        }
-        if (action === 'remote') {
-          // remote 是雲端「當天資料」那份，不含歷史封存（見 cloudSyncFetchText() 只抓
-          // &part=current）——真的要用雲端覆蓋，得另外抓一次歷史檔案補上，
-          // applyImportedData() 才吃得下（它要求 dayHistory 是個物件）。只有
-          // readHistoryText 存在（雲端這條路）才需要多這一步。
-          function finish() {
-            if (remoteModified != null) markSynced(remoteModified);
-            return 'imported';
-          }
-          if (transport.readHistoryText) {
-            showSyncLock();
-            return transport.readHistoryText().then(function (histText) {
-              var hist = null;
-              if (histText && histText.trim()) {
-                try { hist = JSON.parse(histText); } catch (e) { hist = null; }
-              }
-              remote.dayHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
-              hideSyncLock();
-              applyImportedData(remote);
-              return finish();
-            }).catch(function () {
-              hideSyncLock();
-              remote.dayHistory = {};
-              applyImportedData(remote);
-              return finish();
-            });
-          }
-          applyImportedData(remote);
-          return finish();
-        }
-        return 'overwrite'; // action === 'local'：用本機覆蓋雲端，本機資料不動，呼叫端負責推播
-      });
+      applyMergedResult(computeMerge(remote));
+      render();
+      return 'merged';
     }).catch(function () { return 'no-diff'; /* 讀不到就當作沒有衝突，不影響正常使用 */ });
   }
 
