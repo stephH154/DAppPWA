@@ -1079,6 +1079,8 @@
 
 <div class="sync-fail-toast" id="syncFailToast"></div>
 
+<!-- 同步三選一視窗（合併/本機覆蓋/雲端覆蓋/取消）目前 comment 掉了——「完全信任 updatedAt」
+     政策上線後沒有任何呼叫點會再打開它，見 daily-task-calendar-workflow 對應規格章節。
 <div class="detail-overlay" id="syncConflictOverlay"></div>
 <div class="shortcuts-modal" id="syncConflictModal">
   <div class="detail-head">
@@ -1092,6 +1094,7 @@
     <button type="button" class="choice-btn" id="syncConflictCancel">取消</button>
   </div>
 </div>
+-->
 
 <!-- 「清空資料」有設定自動同步時才會用到——同步端(雲端檔案/本機連結檔案)那份資料要不要
      一起清掉，使用者自己選，不是程式幫忙猜。沒設定同步時，clearDataBtn 直接走原生 confirm()，
@@ -1176,11 +1179,25 @@ window.addEventListener('error', function (e) {
   // 見 cloudSyncSaveBtn 那邊 pullHistoryIfCloud() 的判斷。
   var KEY_LAST_SYNCED_CLOUD_TOKEN = 'dtc_lastSyncedCloudToken';
   // 同步重構（見規格「同步機制重構」一節）：syncMeta 取代原本單一顆 lastKnownSyncModified，
-  // 存兩個時間戳——lastSyncedRemoteTime（遠端上次確認同步時的 lastModified）跟
-  // lastLocalChangeTime（本機上次真的動過資料的時間，persistAll() 每次都會刷新）。
+  // 存三個時間戳——lastSyncedRemoteTime（遠端上次確認同步時的 lastModified，伺服器時間，
+  // 跟 readMeta() 比對用）、lastLocalChangeTime（本機上次真的動過資料的時間，本機時鐘，
+  // persistAll() 每次都會刷新）、pushedLocalChangeTime（本機上次「成功推播出去」那個當下，
+  // lastLocalChangeTime 是多少，本機時鐘）。
   // remoteChanged = 現在讀到的遠端 lastModified !== lastSyncedRemoteTime
-  // localChanged  = lastLocalChangeTime > lastSyncedRemoteTime
+  // localChanged  = lastLocalChangeTime > pushedLocalChangeTime
   // 兩者的組合決定要 push／pull／什麼都不做／還是需要合併，見 scheduleAutoSync()。
+  //
+  // 【換日誤判成「已經推播過」的 bug】localChanged 原本是拿 lastLocalChangeTime（本機時鐘）
+  // 去跟 lastSyncedRemoteTime（伺服器時間，push 成功後存的是 Apps Script 真正執行寫入那一刻
+  // 的伺服器時間，不是請求送出的時間）比——Apps Script 冷啟動/執行可能要 10~30 秒，這段
+  // 延遲全部算在 lastSyncedRemoteTime 裡。如果換日剛好卡進「舊推播已經送出、還沒執行完」
+  // 的這幾秒空檔：舊推播（帶著昨天、完成的資料）送出後，換日正確發生、lastLocalChangeTime
+  // 更新成換日的時間；等舊推播終於執行完，寫回的 lastSyncedRemoteTime 卻是比換日時間還晚的
+  // 「現在」——localChanged 被誤判成 false，系統以為換日這個異動已經推播過了，實際上雲端
+  // 還停在昨天、完成的版本，也不會自動重推，要等使用者自己再編輯一次才會被救回來。使用者
+  // 三台裝置同步時回報過這個症狀，指出「更新時間應該要是推的時間，不是完成的時間」，查證
+  // 後正是這個問題。修法：把「這次推播還有沒有跟上」的判斷改成跟 pushedLocalChangeTime
+  // （推播送出前捕捉的本機時間）比，不再受 Apps Script 執行延遲影響。
   var KEY_SYNC_META = 'dtc_syncMeta';
   // 換日這個「刪除紀錄」（tombstone）——removeDef() 被呼叫時都會補一筆 {id, removedAt}。
   // 純聯集式合併（mergeById）天生只會「加」不會「減」：兩邊都有的 id 可以比 updatedAt
@@ -1470,14 +1487,16 @@ window.addEventListener('error', function (e) {
   var createSyncFileBtn = document.getElementById('createSyncFileBtn');
   var syncLockOverlay = document.getElementById('syncLockOverlay');
   var syncFailToast = document.getElementById('syncFailToast');
-  var syncConflictOverlay = document.getElementById('syncConflictOverlay');
-  var syncConflictModal = document.getElementById('syncConflictModal');
-  var syncConflictTitle = document.getElementById('syncConflictTitle');
-  var syncConflictMsg = document.getElementById('syncConflictMsg');
-  var syncConflictMergeBtn = document.getElementById('syncConflictMerge');
-  var syncConflictImportBtn = document.getElementById('syncConflictImport');
-  var syncConflictOverwriteBtn = document.getElementById('syncConflictOverwrite');
-  var syncConflictCancelBtn = document.getElementById('syncConflictCancel');
+  // 同步三選一視窗的 DOM 參照——comment 掉了，見上面 HTML 那塊的說明，這組變數目前沒有
+  // 任何存活的呼叫點會用到。
+  // var syncConflictOverlay = document.getElementById('syncConflictOverlay');
+  // var syncConflictModal = document.getElementById('syncConflictModal');
+  // var syncConflictTitle = document.getElementById('syncConflictTitle');
+  // var syncConflictMsg = document.getElementById('syncConflictMsg');
+  // var syncConflictMergeBtn = document.getElementById('syncConflictMerge');
+  // var syncConflictImportBtn = document.getElementById('syncConflictImport');
+  // var syncConflictOverwriteBtn = document.getElementById('syncConflictOverwrite');
+  // var syncConflictCancelBtn = document.getElementById('syncConflictCancel');
   var cloudSyncMenuBtn = document.getElementById('cloudSyncMenuBtn');
   var cloudSyncMenuLabel = document.getElementById('cloudSyncMenuLabel');
   var cloudSyncOverlay = document.getElementById('cloudSyncOverlay');
@@ -1965,8 +1984,12 @@ window.addEventListener('error', function (e) {
   // pull 成功、或合併完成之後都要呼叫，讓 syncMeta.lastSyncedRemoteTime 保持跟遠端一致，
   // 下次輕量版比對才不會拿舊時間戳重複問一次同一個差異。傳 null 是「換了同步管道/密鑰，
   // 舊的已知時間戳對新管道沒有意義」那幾個重置情境用的。
-  function markSynced(remoteModified) {
+  // 第二個參數 pushedLocalChangeTime 只有「這次真的推播成功」的呼叫點會給——純 pull／
+  // 合併（沒有接著推播）不動這個欄位，維持原樣即可（那次推播如果有發生，會由推播自己
+  // 那次呼叫負責更新）。省略這個參數（單一參數呼叫）就是不動它，不是清空它。
+  function markSynced(remoteModified, pushedLocalChangeTime) {
     syncMeta.lastSyncedRemoteTime = remoteModified;
+    if (arguments.length > 1) syncMeta.pushedLocalChangeTime = pushedLocalChangeTime;
     saveSyncMeta();
   }
   // 雲端同步這次檢查/推播是不是失敗（逾時、離線、後端錯誤）——只在記憶體，重新整理頁面
@@ -2059,6 +2082,9 @@ window.addEventListener('error', function (e) {
 
   function writeToLinkedFile() {
     if (!fileHandle || needsReauth) return Promise.resolve();
+    // 送出前先捕捉這一刻的 lastLocalChangeTime——不是等寫完再重讀，飛行途中如果又有新
+    // 異動，不能誤算成「這次寫進去的內容也涵蓋了那次異動」，見 markSynced() 上面的說明。
+    var capturedLocalChangeTime = syncMeta.lastLocalChangeTime;
     return fileHandle.queryPermission({ mode: 'readwrite' }).then(function (perm) {
       if (perm !== 'granted') return;
       return buildExportPayload().then(function (payload) {
@@ -2072,7 +2098,7 @@ window.addEventListener('error', function (e) {
         // 跟雲端那邊 doPost 回應直接帶 lastModified 是同一個目的，只是本機檔案沒有對應的
         // 回應可以順路帶，要自己多讀一次（File System Access API 這個讀法本身很快，
         // 不用真的讀檔案內容）。
-        return fileHandle.getFile().then(function (f) { markSynced(f.lastModified); });
+        return fileHandle.getFile().then(function (f) { markSynced(f.lastModified, capturedLocalChangeTime); });
       });
     }).catch(function () { /* 使用者可能移除或改了檔案位置，下次點按鈕會重新授權 */ });
   }
@@ -2153,6 +2179,11 @@ window.addEventListener('error', function (e) {
 
   function cloudSyncPushRemote() {
     if (!cloudSyncToken) return Promise.resolve();
+    // 送出前先捕捉這一刻的 lastLocalChangeTime——不能等回應回來才讀，Apps Script 冷啟動/
+    // 執行可能要 10~30 秒，這段飛行期間如果又有新異動（例如換日剛好卡進這個空檔），不能
+    // 誤算成「這次送出去的 payload 也涵蓋了那次異動」，見 markSynced() 上面的說明跟規格
+    // 「換日誤判成已經推播過」那個 bug 的根因。
+    var capturedLocalChangeTime = syncMeta.lastLocalChangeTime;
     var payload = buildCurrentSyncPayload();
     return cloudFetch(CLOUD_SYNC_URL, {
       method: 'POST',
@@ -2163,7 +2194,7 @@ window.addEventListener('error', function (e) {
       // 檢查」下次比對的基準，不用另外再多打一次 &meta=1 才知道剛剛寫進去之後的時間。
       try {
         var data = JSON.parse(text);
-        if (typeof data.lastModified === 'number') markSynced(data.lastModified);
+        if (typeof data.lastModified === 'number') markSynced(data.lastModified, capturedLocalChangeTime);
       } catch (e) { /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
     }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
   }
@@ -2281,49 +2312,54 @@ window.addEventListener('error', function (e) {
     }).catch(function () { /* 抓不到就算了，不影響正常使用，下次換日還有機會再補 */ });
   }
 
-  /* 選到的可能是一個已經有資料的舊檔案（例如連結另一台裝置寫過的同步檔）——
-     如果直接連結+寫入，會拿這台裝置目前（可能是空的）資料蓋掉它。
-     所以先讀一次檔案內容，有看起來像樣的資料就先問要不要匯入，再繼續設定同步。
-     「連結現有檔案」「建立新檔案」兩個入口都共用這段安全檢查。 */
-  /* 三選一的確認彈窗：合併＝套用聯集式合併結果（推薦，見 computeMerge()）；本機覆蓋雲端＝
-     用這台裝置蓋掉遠端；雲端覆蓋本機＝從遠端匯入蓋掉這台裝置；取消＝視情境而定
-     （連結新檔案時＝整個連結都不做；重新授權時＝取消這次重新授權，見 cancelLabel 參數）。
-     合併/本機覆蓋/雲端覆蓋這三個選項不管在哪個情境語意都一樣，只有取消的後果因情境不同，
-     所以取消這顆按鈕的文字是動態帶入的。標題/說明文字統一用「同步衝突」，不用再像舊版
-     那樣依情境動態代入標題/說明——因為現在只有「同一個活著的 id 兩邊值真的不同」才會走到
-     這裡（見 computeMerge() 的 ambiguous 判斷），不管觸發來源是換日、日常編輯、還是手動
-     連結，語意都是同一件事：本機和對方都有你可能不想弄丟的變更，不像舊版還要區分「這是
-     連結新檔案第一次發現資料」跟「本來在同步中途偵測到外部改動」兩種不同措辭。 */
-  var pendingSyncConflictSettle = null;
-  function askSyncConflictAction(fileName, cancelLabel) {
-    return new Promise(function (resolve) {
-      syncConflictTitle.textContent = '同步衝突';
-      syncConflictMsg.textContent = '本機和「' + fileName + '」自從上次同步後都有新的變更，要保留哪一邊？（也可以合併兩邊）';
-      syncConflictCancelBtn.textContent = '取消 —— ' + (cancelLabel || '不設定同步');
-
-      syncConflictModal.classList.add('open');
-      syncConflictOverlay.classList.add('open');
-
-      function settle(result) {
-        pendingSyncConflictSettle = null;
-        syncConflictModal.classList.remove('open');
-        syncConflictOverlay.classList.remove('open');
-        syncConflictMergeBtn.onclick = null;
-        syncConflictOverwriteBtn.onclick = null;
-        syncConflictImportBtn.onclick = null;
-        syncConflictCancelBtn.onclick = null;
-        resolve(result);
-      }
-      pendingSyncConflictSettle = settle;
-      syncConflictMergeBtn.onclick = function () { settle('merge'); };
-      syncConflictOverwriteBtn.onclick = function () { settle('local'); };
-      syncConflictImportBtn.onclick = function () { settle('remote'); };
-      syncConflictCancelBtn.onclick = function () { settle('cancel'); };
-    });
-  }
-  syncConflictOverlay.addEventListener('click', function () {
-    if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel');
-  });
+  // 同步三選一視窗（合併/本機覆蓋/雲端覆蓋/取消）的邏輯本體——comment 掉了，「完全信任
+  // updatedAt」政策上線後 resolveSyncConflict()/finishLinkingHandle() 都不再呼叫
+  // askSyncConflictAction()，這整段是休眠狀態；下面舊說明文字也一併保留在 comment 裡，
+  // 之後真的要恢復「有衝突就問」的行為時，把整塊取消 comment 即可，邏輯不用重寫。
+  //
+  // /* 選到的可能是一個已經有資料的舊檔案（例如連結另一台裝置寫過的同步檔）——
+  //    如果直接連結+寫入，會拿這台裝置目前（可能是空的）資料蓋掉它。
+  //    所以先讀一次檔案內容，有看起來像樣的資料就先問要不要匯入，再繼續設定同步。
+  //    「連結現有檔案」「建立新檔案」兩個入口都共用這段安全檢查。 */
+  // /* 三選一的確認彈窗：合併＝套用聯集式合併結果（推薦，見 computeMerge()）；本機覆蓋雲端＝
+  //    用這台裝置蓋掉遠端；雲端覆蓋本機＝從遠端匯入蓋掉這台裝置；取消＝視情境而定
+  //    （連結新檔案時＝整個連結都不做；重新授權時＝取消這次重新授權，見 cancelLabel 參數）。
+  //    合併/本機覆蓋/雲端覆蓋這三個選項不管在哪個情境語意都一樣，只有取消的後果因情境不同，
+  //    所以取消這顆按鈕的文字是動態帶入的。標題/說明文字統一用「同步衝突」，不用再像舊版
+  //    那樣依情境動態代入標題/說明——因為現在只有「同一個活著的 id 兩邊值真的不同」才會走到
+  //    這裡（見 computeMerge() 的 ambiguous 判斷），不管觸發來源是換日、日常編輯、還是手動
+  //    連結，語意都是同一件事：本機和對方都有你可能不想弄丟的變更，不像舊版還要區分「這是
+  //    連結新檔案第一次發現資料」跟「本來在同步中途偵測到外部改動」兩種不同措辭。 */
+  // var pendingSyncConflictSettle = null;
+  // function askSyncConflictAction(fileName, cancelLabel) {
+  //   return new Promise(function (resolve) {
+  //     syncConflictTitle.textContent = '同步衝突';
+  //     syncConflictMsg.textContent = '本機和「' + fileName + '」自從上次同步後都有新的變更，要保留哪一邊？（也可以合併兩邊）';
+  //     syncConflictCancelBtn.textContent = '取消 —— ' + (cancelLabel || '不設定同步');
+  //
+  //     syncConflictModal.classList.add('open');
+  //     syncConflictOverlay.classList.add('open');
+  //
+  //     function settle(result) {
+  //       pendingSyncConflictSettle = null;
+  //       syncConflictModal.classList.remove('open');
+  //       syncConflictOverlay.classList.remove('open');
+  //       syncConflictMergeBtn.onclick = null;
+  //       syncConflictOverwriteBtn.onclick = null;
+  //       syncConflictImportBtn.onclick = null;
+  //       syncConflictCancelBtn.onclick = null;
+  //       resolve(result);
+  //     }
+  //     pendingSyncConflictSettle = settle;
+  //     syncConflictMergeBtn.onclick = function () { settle('merge'); };
+  //     syncConflictOverwriteBtn.onclick = function () { settle('local'); };
+  //     syncConflictImportBtn.onclick = function () { settle('remote'); };
+  //     syncConflictCancelBtn.onclick = function () { settle('cancel'); };
+  //   });
+  // }
+  // syncConflictOverlay.addEventListener('click', function () {
+  //   if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel');
+  // });
 
   // 本機檔案／雲端同步互斥——設定其中一個就自動解除另一個，避免兩條同步管道同時生效、
   // 「到底哪一份才是對的」變成沒人管得清楚的狀態。
@@ -2332,7 +2368,7 @@ window.addEventListener('error', function (e) {
     fileHandle = null;
     needsReauth = false;
     idbDel('handles', 'linked');
-    markSynced(null); // 換掉同步管道，舊的「已知時間戳」對新管道沒有意義
+    markSynced(null, null); // 換掉同步管道，舊的「已知時間戳」對新管道沒有意義（兩個都清）
     updateSyncBtn();
   }
   function disconnectCloudSyncSilently() {
@@ -2340,7 +2376,7 @@ window.addEventListener('error', function (e) {
     cloudSyncToken = '';
     localStorage.removeItem(KEY_CLOUD_SYNC_TOKEN);
     cloudSyncDisconnected = false;
-    markSynced(null);
+    markSynced(null, null);
     // 解除同步（不管是使用者主動按解除、連線失敗被拒絕、還是清空資料連帶解除）都要
     // 把這個值一併清掉——下次不管重新連結同一組密鑰還是換一組新的，都要重新當「第一次」
     // 處理，見 cloudSyncSaveBtn 那邊 pullHistoryIfCloud() 的判斷跟 KEY_LAST_SYNCED_CLOUD_TOKEN
@@ -2400,7 +2436,7 @@ window.addEventListener('error', function (e) {
     // 不會留下「明明沒連成功，卻被記成已經同步過這組密鑰」的錯誤狀態。
     saveLastSyncedCloudToken(token);
     cloudSyncDisconnected = false;
-    markSynced(null); // 換了一組密鑰,舊的「已知時間戳」是對應到別組密鑰的資料,沒有意義
+    markSynced(null, null); // 換了一組密鑰,舊的「已知時間戳」是對應到別組密鑰的資料,沒有意義（兩個都清）
     updateCloudSyncUi();
     // 連結當下先比對一次，跟連結本機檔案同一個道理——這個網址背後可能早就有資料了
     // （例如另一台裝置已經在用），不能無條件用這台裝置的（可能是空的）資料蓋過去
@@ -2827,7 +2863,7 @@ window.addEventListener('error', function (e) {
         updateCloudSyncUi();
       }
       if (remoteModified === syncMeta.lastSyncedRemoteTime) return;
-      var localChanged = (syncMeta.lastLocalChangeTime || 0) > (syncMeta.lastSyncedRemoteTime || 0);
+      var localChanged = (syncMeta.lastLocalChangeTime || 0) > (syncMeta.pushedLocalChangeTime || 0);
       if (!localChanged) return pullRemoteSilently(transport, remoteModified);
       return runFullSyncCheck().then(function () {
         // 不管這次比對最後選了哪個（合併／確定／覆蓋／取消），都已經看過這個時間點的
@@ -2874,7 +2910,7 @@ window.addEventListener('error', function (e) {
         updateCloudSyncUi();
       }
       var remoteChanged = remoteModified !== syncMeta.lastSyncedRemoteTime;
-      var localChanged = (syncMeta.lastLocalChangeTime || 0) > (syncMeta.lastSyncedRemoteTime || 0);
+      var localChanged = (syncMeta.lastLocalChangeTime || 0) > (syncMeta.pushedLocalChangeTime || 0);
       if (!localChanged) return; // 沒有本機異動需要推播（理論上不太會發生，防呆）
       if (!remoteChanged) return pushToActiveSync(); // 遠端沒人動過，安全，直接推播
       return runFullSyncCheck().then(function () { markSynced(remoteModified); });
@@ -2924,7 +2960,7 @@ window.addEventListener('error', function (e) {
   var SYNC_FOCUS_CHECK_COOLDOWN_MS = 5000;
   function checkSyncOnFocus() {
     if (!activeSyncTransport()) return;
-    if (syncConflictModal.classList.contains('open')) return; // 已經有一個同步確認開著，不要疊第二個
+    // if (syncConflictModal.classList.contains('open')) return; // 三選一視窗已 comment 掉，這個防呆用不到了
     var now = Date.now();
     if (now - lastSyncFocusCheckAt < SYNC_FOCUS_CHECK_COOLDOWN_MS) return;
     lastSyncFocusCheckAt = now;
@@ -4037,7 +4073,7 @@ window.addEventListener('error', function (e) {
     else if (templatesModal.classList.contains('open')) closeTemplates();
     // else if (csvModal.classList.contains('open')) closeCsvModal(); // CSV 匯入功能目前 comment 掉了
     else if (taskSheetModal.classList.contains('open')) closeTaskSheet();
-    else if (syncConflictModal.classList.contains('open')) { if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel'); }
+    // else if (syncConflictModal.classList.contains('open')) { if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel'); } // 三選一視窗已 comment 掉
     else if (clearDataModal.classList.contains('open')) { if (pendingClearDataSettle) pendingClearDataSettle('cancel'); }
     else if (calendarModal.classList.contains('open')) closeCalendarModal();
     else if (shortcutsModal.classList.contains('open')) closeShortcuts();
