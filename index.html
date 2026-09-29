@@ -1291,6 +1291,23 @@ window.addEventListener('error', function (e) {
     taskDefs = taskDefs.filter(function (d) { return d.id !== id; });
     removedDefIds.push({ id: id, removedAt: Date.now() });
   }
+  // 關掉「每日」屬性的每個地方都要呼叫這個——review 抓到的真實 bug：rollover() 判斷
+  // 「done + 不是每日任務」要不要清掉定義，看的是換日當下的 isDaily，不是「完成的時候
+  // 算不算每日」。如果今天已經完成、才順手關掉每日，換日後這個定義會被整個刪掉，跟
+  // 「移除」按鈕自己的說明文字「任務本身還在，只是之後不會再自動每天出現」直接矛盾。
+  // 修法：關掉每日的當下，如果今天這筆已經是 done，在那個 dayState.items 項目上記一個
+  // keepDefOnRollover 旗標，rollover() 判斷要不要清掉時額外看這個旗標——只要完成當下
+  // 是每日任務，之後不管有沒有關掉每日屬性，這筆定義都不會被自動清除。內部已經檢查
+  // def.isDaily，呼叫端不用自己先判斷方向（切換或單向設 false 都可以直接呼叫）。
+  function keepDefIfDoneTodayOnDailyToggleOff(def) {
+    if (def.isDaily) return;
+    for (var i = 0; i < dayState.items.length; i++) {
+      if (dayState.items[i].taskId === def.id) {
+        if (dayState.items[i].status === 'done') dayState.items[i].keepDefOnRollover = true;
+        break;
+      }
+    }
+  }
   // 跟 pruneHistory() 同一套裁剪窗口（HISTORY_RETENTION_DAYS，定義在下面）——tombstone
   // 只需要活到「最慢同步的那台裝置」也追上為止，沒有必要無限累加。裁剪依據是
   // removedAt 距離現在的天數，不是跟著 dayState.date 走（跟 pruneHistory 用日期字串
@@ -1346,12 +1363,16 @@ window.addEventListener('error', function (e) {
     var skipDaily = {};
     (oldState.skipDailyTomorrow || []).forEach(function (id) { skipDaily[id] = true; });
 
+    // 跳過的每日任務還是要 pushOnce 進去（狀態存成 'skipped'，不是完全不出現）——
+    // 子任務照樣重設成 pending，跟沒被跳過的每日任務一致，只差在外層狀態。這樣
+    // computeStreak() 才有東西可以判斷「這天是主動跳過」而不是「這天完全沒紀錄」，
+    // 見 computeStreak() 上面的說明跟規格「連續天數把跳過當失敗」那節。
     taskDefs.forEach(function (def) {
-      if (def.isDaily && !skipDaily[def.id]) {
+      if (def.isDaily) {
         if (def.subtasks && def.subtasks.length) {
           def.subtasks.forEach(function (sub) { sub.status = 'pending'; });
         }
-        pushOnce(def.id, 'pending');
+        pushOnce(def.id, skipDaily[def.id] ? 'skipped' : 'pending');
       }
     });
 
@@ -1371,7 +1392,9 @@ window.addEventListener('error', function (e) {
     oldState.items.forEach(function (it) {
       if (it.status === 'done') {
         var def = getDef(it.taskId);
-        if (def && !def.isDaily) removeDef(it.taskId);
+        // keepDefOnRollover：完成當下這筆是每日任務、之後才被關掉每日屬性的情況，
+        // 見 keepDefIfDoneTodayOnDailyToggleOff() 上面的說明，這裡不清掉定義。
+        if (def && !def.isDaily && !it.keepDefOnRollover) removeDef(it.taskId);
       }
     });
 
@@ -1386,16 +1409,22 @@ window.addEventListener('error', function (e) {
     });
   }
 
-  // persistAll() 只負責「本機這次真的動過資料」這件事本身——存檔、記錄動過的時間、排一次
-  // debounce 過的自動同步檢查。要不要真的打網路、打了之後是 push／pull／跳合併視窗，全部
-  // 交給 scheduleAutoSync()/runAutoSync() 決定，這裡不再直接呼叫 pushToActiveSync()。
-  function persistAll() {
+  // 純粹「把目前記憶體裡的資料存回 localStorage」，不碰 syncMeta、不排自動同步——
+  // persistAll()（真的算本機異動）跟 applyImportedData() 的 silent 分支（單純採用
+  // 遠端資料，不算本機異動）共用這一段，避免兩邊各自維護一份一模一樣的 saveJSON 清單。
+  function persistLocalData() {
     pruneHistory();
     pruneRemovedDefIds();
     saveJSON(KEY_DEFS, taskDefs);
     saveJSON(KEY_DAY, dayState);
     saveJSON(KEY_HIST, dayHistory);
     saveRemovedDefIds();
+  }
+  // persistAll() 只負責「本機這次真的動過資料」這件事本身——存檔、記錄動過的時間、排一次
+  // debounce 過的自動同步檢查。要不要真的打網路、打了之後是 push／pull／跳合併視窗，全部
+  // 交給 scheduleAutoSync()/runAutoSync() 決定，這裡不再直接呼叫 pushToActiveSync()。
+  function persistAll() {
+    persistLocalData();
     syncMeta.lastLocalChangeTime = Date.now();
     saveSyncMeta();
     scheduleAutoSync();
@@ -1665,7 +1694,7 @@ window.addEventListener('error', function (e) {
     var lines = [dayState.date + '（' + weekdayLabel(dayState.date) + '）'];
 
     dayState.items
-      .filter(function (it) { return it.status !== 'deferred' && !pendingRemovals[it.taskId]; })
+      .filter(function (it) { return it.status !== 'deferred' && it.status !== 'skipped' && !pendingRemovals[it.taskId]; })
       .forEach(function (it) {
         var def = getDef(it.taskId);
         if (!def) return;
@@ -1775,7 +1804,14 @@ window.addEventListener('error', function (e) {
     });
   });
 
-  function applyImportedData(data) {
+  // options.silent 給 pullRemoteSilently() 用——單純採用遠端資料，不算「本機自己動的
+  // 手」（不能刷新 lastLocalChangeTime、不能排 scheduleAutoSync，跟 applyMergedResult()
+  // 刻意不這麼做同一個原則，見那邊的說明；review 找到的真實 bug：原本這裡一律呼叫
+  // persistAll()，導致每次靜默同步後都會把剛拉下來的資料原封不動再推回雲端一次，也
+  // 可能跟另一台裝置真正的推播撞在一起，製造不必要的樂觀鎖版本衝突）。手動「匯入備份」
+  // 那條路徑不傳這個參數，維持原本「算本機異動」的行為不變。
+  function applyImportedData(data, options) {
+    var silent = !!(options && options.silent);
     // data.schemaVersion 不存在＝這份匯出檔案早於 SCHEMA_VERSION 這個欄位存在的時候（視同版本 0）。
     // 目前每個欄位各自用「存不存在」做相容判斷（templates 就是一例），還沒有真的需要照版號
     // 分支處理的情境；等以後真的出現「這個版本的欄位意思跟舊版不一樣」而不是單純「新增/沒有」
@@ -1785,7 +1821,7 @@ window.addEventListener('error', function (e) {
       && data.dayState && typeof data.dayState.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.dayState.date) && Array.isArray(data.dayState.items)
       && data.dayHistory && typeof data.dayHistory === 'object' && !Array.isArray(data.dayHistory);
     if (!validShape) {
-      alert('這個檔案格式看起來不對，匯入失敗。');
+      if (!silent) alert('這個檔案格式看起來不對，匯入失敗。');
       return;
     }
     taskDefs = data.taskDefs;
@@ -1805,8 +1841,14 @@ window.addEventListener('error', function (e) {
         idbSet('history', dateKey, dayHistory[dateKey]).catch(function () {});
       });
     }
-    if (checkRollover()) pullHistoryIfCloud().then(pushHistoryIfCloud);
-    persistAll();
+    // 採用遠端資料之後，如果遠端那份的日期比今天舊，這裡的 checkRollover() 會用剛套用
+    // 進來的（過時）資料當 oldState 換日一次——換出來的今天狀態是這台裝置自己算出來的
+    // 新資料，雲端從來沒有過，這個一定要算成本機異動、一定要 persistAll()，不能因為
+    // silent 就跳過，不然這份剛換日算出來的正確狀態會永遠推不回雲端。只有「沒有觸發
+    // 換日、單純原封不動採用遠端」這種情況，silent 才真的什麼都不算。
+    var rolledOver = checkRollover();
+    if (rolledOver) pullHistoryIfCloud().then(pushHistoryIfCloud);
+    if (silent && !rolledOver) persistLocalData(); else persistAll();
     currentView = dayState.date;
     scheduleDate.min = dayState.date;
     render();
@@ -2733,7 +2775,11 @@ window.addEventListener('error', function (e) {
   function mergeDayState(remote) {
     if (remote.dayState.date !== dayState.date) {
       var newer = remote.dayState.date > dayState.date ? remote.dayState : dayState;
-      return { date: newer.date, items: Array.isArray(newer.items) ? newer.items : [], skipDailyTomorrow: dayState.skipDailyTomorrow, ambiguous: false };
+      // skipDailyTomorrow 要跟著「哪一份日期贏」走，不能不管誰贏都固定用本機的——
+      // 這個欄位是「明天預覽」裡跳過個別每日任務用的，語意上屬於贏的那一份 dayState，
+      // 之前不管哪邊贏都硬拿 dayState（本機）的，遠端贏的時候會錯把本機這份可能過時
+      // 的跳過清單套用到遠端那份日期上（review 找到的真實不一致，不是假設性風險）。
+      return { date: newer.date, items: Array.isArray(newer.items) ? newer.items : [], skipDailyTomorrow: newer.skipDailyTomorrow, ambiguous: false };
     }
     var itemsResult = mergeById(dayState.items, Array.isArray(remote.dayState.items) ? remote.dayState.items : [], 'taskId', removedDefIds, remote.removedDefIds || [], itemsDiffer);
     return { date: dayState.date, items: itemsResult.list, skipDailyTomorrow: dayState.skipDailyTomorrow, ambiguous: itemsResult.ambiguous };
@@ -2851,17 +2897,27 @@ window.addEventListener('error', function (e) {
   // ② 切回來觸發的 checkSyncOnFocus()→checkRemoteSyncForChanges() 完全不知道這裡已經有
   // 一個同步請求在飛，沒被任何旗標擋掉，另外發起一個完全獨立、彼此互搶資源的雲端請求，
   // 兩邊同時打反而更容易逾時/失敗，使用者因此看到「明明還在等，卻已經斷線」的假象。
-  // 修法：套用跟 runFullSyncCheck() 一樣的鎖畫面+逾時安全閥，並且補上 syncCheckInFlight——
-  // 這裡刻意讓旗標在「真的比對完成」才解除，不是在逾時那一刻就解除（比 runFullSyncCheck()
-  // 目前的寫法更嚴謹一點，但不去動 runFullSyncCheck() 本身，避免牽動已經驗證過很多輪的
-  // 背景檢查路徑）：就算鎖畫面因為逾時先解除、放使用者回去操作，背景那個真正的
-  // resolveSyncConflict() 還沒完成之前，新的背景檢查一樣會被這個旗標擋掉，不會又疊一個。
-  // onResolved(action) 只在 resolveSyncConflict() 真的解決之後才會被呼叫（逾時放行不算解決）。
+  // 修法：套用跟 runFullSyncCheck() 一樣的鎖畫面+逾時安全閥。onResolved(action) 只在
+  // resolveSyncConflict() 真的解決之後才會被呼叫（逾時放行不算解決）。
+  //
+  // 【獨立旗標】這裡原本共用 checkRemoteSyncForChanges()/runAutoSync() 的
+  // syncCheckInFlight，用意是背景檢查在跑的時候也順便擋住這裡——但 review 抓到真的問題：
+  // 這裡是使用者主動觸發、有 onResolved 一定要跑完（推播/錯誤提示），不能照抄背景檢查
+  // 「旗標已經 true 就直接放棄」那招（那樣使用者按下去會像沒反應一樣）；共用同一個旗標
+  // 反而會出事：如果背景檢查已經在飛，使用者這時按下「儲存並連結」，兩邊各自的
+  // resolveSyncConflict() 會同時飛，先完成的那個會把「共用」的旗標重置成 false，另一邊
+  // 明明還沒結束卻已經失去防呆保護，第三個觸發點可能因此又疊上去。改成獨立的
+  // lockedSyncCheckInFlight，只防「這個入口自己被連續觸發兩次」，不再跟背景檢查互踩——
+  // 代價是背景檢查跟使用者主動觸發理論上真的可能同時各打一次網路請求，不算資料風險
+  // （樂觀鎖版本比對已經確保寫入不會被靜默覆蓋，見 doPost() 的說明），頂多多一次網路
+  // 往返或一次不需要的版本衝突重試，使用者評估過後決定接受這個取捨。
+  var lockedSyncCheckInFlight = false;
   function runLockedSyncCheck(cancelLabel, onResolved) {
-    syncCheckInFlight = true;
+    if (lockedSyncCheckInFlight) return Promise.resolve();
+    lockedSyncCheckInFlight = true;
     showSyncLock();
     var checkPromise = resolveSyncConflict(cancelLabel).then(function (action) {
-      syncCheckInFlight = false;
+      lockedSyncCheckInFlight = false;
       if (onResolved) onResolved(action);
     });
     var timeoutPromise = new Promise(function (resolve) {
@@ -2894,6 +2950,8 @@ window.addEventListener('error', function (e) {
   // 直接覆蓋掉先呼叫的按鈕綁定，先呼叫那次的使用者選擇就這樣被悄悄蓋掉、永遠等不到
   // 使用者按下去，只能靠 runFullSyncCheck() 自己的逾時放行收尾。用一個簡單的旗標擋掉
   // 「已經有一次檢查在跑」的重複呼叫，不管是輕量版檢查階段還是完整比對階段都算在內。
+  // 背景檢查專用（checkRemoteSyncForChanges()/runAutoSync() 共用）——跟下面
+  // lockedSyncCheckInFlight 分開後，這裡不再連帶擋住 runLockedSyncCheck()，見那邊的說明。
   var syncCheckInFlight = false;
   // 遠端內容確定變了、本機完全沒有自己的異動時的安全路徑——直接整包拉下來蓋掉本機，
   // 不用跑 computeMerge()／不用跳窗，本機沒有東西會不見。跟 applyImportedData() 的
@@ -2920,15 +2978,15 @@ window.addEventListener('error', function (e) {
           }
           syncMeta.historyRevision = (hist && typeof hist._syncRevision === 'number') ? hist._syncRevision : 0;
           remote.dayHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
-          applyImportedData(remote);
+          applyImportedData(remote, { silent: true });
           finish();
         }).catch(function () {
           remote.dayHistory = {};
-          applyImportedData(remote);
+          applyImportedData(remote, { silent: true });
           finish();
         });
       }
-      applyImportedData(remote);
+      applyImportedData(remote, { silent: true });
       finish();
     });
   }
@@ -3419,6 +3477,7 @@ window.addEventListener('error', function (e) {
 
     addSheetAction(def.isDaily ? '取消每日任務' : '設為每日任務', null, function () {
       def.isDaily = !def.isDaily;
+      keepDefIfDoneTodayOnDailyToggleOff(def);
       touch(def);
       persistAll();
       render();
@@ -4155,6 +4214,7 @@ window.addEventListener('error', function (e) {
     else if (taskSheetModal.classList.contains('open')) closeTaskSheet();
     // else if (syncConflictModal.classList.contains('open')) { if (pendingSyncConflictSettle) pendingSyncConflictSettle('cancel'); } // 三選一視窗已 comment 掉
     else if (clearDataModal.classList.contains('open')) { if (pendingClearDataSettle) pendingClearDataSettle('cancel'); }
+    else if (cloudSyncModal.classList.contains('open')) closeCloudSyncModal();
     else if (calendarModal.classList.contains('open')) closeCalendarModal();
     else if (shortcutsModal.classList.contains('open')) closeShortcuts();
     else if (moreMenu.classList.contains('open')) moreMenu.classList.remove('open');
@@ -4409,7 +4469,12 @@ window.addEventListener('error', function (e) {
       for (var i = 0; i < snap.items.length; i++) {
         if (snap.items[i].taskId === taskId) { found = snap.items[i]; break; }
       }
-      if (!found || found.status !== 'done') break;
+      if (!found) break; // 這天完全沒有這個 taskId 的紀錄——通常是任務那時候還不存在，停在這裡
+      // 'skipped'：用「明天不出現」主動跳過的一天，不算失敗也不算完成——連續天數不中斷、
+      // 也不增加，直接看更早一天。跟「沒有紀錄」分開判斷，才不會把「這個任務其實那時候
+      // 還不存在」也誤判成跳過（review 找到的真實 bug，見規格「連續天數把跳過當失敗」）。
+      if (found.status === 'skipped') { cursor = addDays(cursor, -1); continue; }
+      if (found.status !== 'done') break;
       streak++;
       cursor = addDays(cursor, -1);
     }
@@ -4485,6 +4550,7 @@ window.addEventListener('error', function (e) {
     dailyTag.onclick = function (e) {
       e.stopPropagation();
       def.isDaily = !def.isDaily;
+      keepDefIfDoneTodayOnDailyToggleOff(def);
       touch(def);
       persistAll();
       render();
@@ -4669,10 +4735,10 @@ window.addEventListener('error', function (e) {
     prevBtn.disabled = !earliestHistoryBefore(currentView);
     nextBtn.disabled = isToday;
 
-    // 只算今天的 dayState.items：每日/一次性/已排進來的都算，已延期的（明天預覽那批）不算，
-    // 沒有任務時整個環藏起來，不畫一個沒意義的空環
+    // 只算今天的 dayState.items：每日/一次性/已排進來的都算，已延期的（明天預覽那批）
+    // 跟明天不出現而跳過的（skipped）都不算，沒有任務時整個環藏起來，不畫一個沒意義的空環
     if (isToday) {
-      var progressTotal = dayState.items.filter(function (it) { return it.status !== 'deferred'; }).length;
+      var progressTotal = dayState.items.filter(function (it) { return it.status !== 'deferred' && it.status !== 'skipped'; }).length;
       var progressDone = dayState.items.filter(function (it) { return it.status === 'done'; }).length;
       if (progressTotal > 0) {
         var pct = Math.round((progressDone / progressTotal) * 100);
@@ -4703,7 +4769,10 @@ window.addEventListener('error', function (e) {
 
   function renderToday() {
     mainList.innerHTML = '';
-    var visible = dayState.items.filter(function (it) { return it.status !== 'deferred'; });
+    // 'skipped' 是「明天不出現」跳過的每日任務——rollover() 還是會產生這筆項目（讓
+    // computeStreak() 能分辨「跳過」跟「真的沒做」），但畫面上要跟原本一樣完全不出現，
+    // 見規格「連續天數把跳過當失敗」那節。
+    var visible = dayState.items.filter(function (it) { return it.status !== 'deferred' && it.status !== 'skipped'; });
     // 已完成的沉到清單最下面，只影響顯示順序——.filter() 已經回傳新陣列，這裡再 .sort()
     // 不會動到 dayState.items 本身的實際順序（拖曳排序存檔用的是那份，不是這份顯示用的）。
     // 用穩定排序只把「完成」跟「未完成」分兩群、群內原本的相對順序不變，不是整批打亂重排。
@@ -4779,6 +4848,7 @@ window.addEventListener('error', function (e) {
       dailyTag.onclick = function (e) {
         e.stopPropagation();
         def.isDaily = !def.isDaily;
+        keepDefIfDoneTodayOnDailyToggleOff(def);
         touch(def);
         persistAll();
         render();
@@ -4958,6 +5028,7 @@ window.addEventListener('error', function (e) {
         removeBtn.title = '關掉「每日」屬性——任務本身還在，只是之後不會再自動每天出現';
         removeBtn.onclick = function () {
           def.isDaily = false;
+          keepDefIfDoneTodayOnDailyToggleOff(def);
           touch(def);
           persistAll();
           render();
@@ -4990,8 +5061,11 @@ window.addEventListener('error', function (e) {
     }
     emptyMsg.style.display = 'none';
 
-    var statusLabel = { done: '已完成', deferred: '已延期', pending: '未完成' };
-    var statusClass = { done: 'tag-done', deferred: 'tag-deferred', pending: 'tag-pending' };
+    // skipped：用「明天不出現」主動跳過的每日任務，不是真的沒做——用跟 deferred 一樣的
+    // 中性樣式跟自己的字樣，不能落到 pending 的預設樣式，不然歷史畫面看起來像「沒做」，
+    // 見規格「連續天數把跳過當失敗」那節。
+    var statusLabel = { done: '已完成', deferred: '已延期', pending: '未完成', skipped: '已跳過' };
+    var statusClass = { done: 'tag-done', deferred: 'tag-deferred', pending: 'tag-pending', skipped: 'tag-deferred' };
 
     snapshot.items.forEach(function (it) {
       // 只有存過子任務快照的項目才能展開（見 archiveDay()）；換版本之前留下的舊歷史紀錄
