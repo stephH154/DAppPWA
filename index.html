@@ -1198,6 +1198,17 @@ window.addEventListener('error', function (e) {
   // 三台裝置同步時回報過這個症狀，指出「更新時間應該要是推的時間，不是完成的時間」，查證
   // 後正是這個問題。修法：把「這次推播還有沒有跟上」的判斷改成跟 pushedLocalChangeTime
   // （推播送出前捕捉的本機時間）比，不再受 Apps Script 執行延遲影響。
+  //
+  // 【樂觀鎖／版本比對】上面那個修法解決的是「這台裝置知不知道自己還欠一次推播」，但沒解到
+  // 更根本的問題：後端 doPost() 原本完全不上鎖、不比版本，同一個 token 從多台裝置寫入是
+  // 「整包蓋過去、誰執行完誰贏」（不是誰先送出誰贏）——三台裝置在換日前後幾秒內同時推播，
+  // 舊資料的請求完全可能比新資料的請求晚執行完，把新的悄悄蓋掉。修法是後端加版本比對
+  // （見 daily-task-cloud-sync-apps-script.txt 的 doPost() 說明），client 端對應多存兩個
+  // 版本號：currentRevision（雲端 current 檔案的版本）、historyRevision（雲端 history
+  // 檔案的版本）——都是本機記得的「上次讀到/推播成功時，遠端是第幾版」，推播時帶著送出去，
+  // 被拒絕（版本衝突）就重讀最新內容、重新合併、用新版本號再送一次，見
+  // cloudSyncPushRemote()／cloudSyncPushHistoryRemote() 上面的說明。這兩個欄位只有雲端
+  // 同步這條路會用到，本機檔案同步沒有這個機制。
   var KEY_SYNC_META = 'dtc_syncMeta';
   // 換日這個「刪除紀錄」（tombstone）——removeDef() 被呼叫時都會補一筆 {id, removedAt}。
   // 純聯集式合併（mergeById）天生只會「加」不會「減」：兩邊都有的 id 可以比 updatedAt
@@ -1990,6 +2001,13 @@ window.addEventListener('error', function (e) {
   function markSynced(remoteModified, pushedLocalChangeTime) {
     syncMeta.lastSyncedRemoteTime = remoteModified;
     if (arguments.length > 1) syncMeta.pushedLocalChangeTime = pushedLocalChangeTime;
+    // remoteModified === null 是換管道/密鑰的重置情境（見上面說明）——樂觀鎖的版本號
+    // 也是對應到「舊管道」的資料，一起歸零，不然換到新管道之後第一次推播會拿舊版本號
+    // 去比對新管道的檔案，白白多繞一次「版本衝突→重合併→重送」。
+    if (remoteModified === null) {
+      syncMeta.currentRevision = 0;
+      syncMeta.historyRevision = 0;
+    }
     saveSyncMeta();
   }
   // 雲端同步這次檢查/推播是不是失敗（逾時、離線、後端錯誤）——只在記憶體，重新整理頁面
@@ -2177,39 +2195,82 @@ window.addEventListener('error', function (e) {
     return cloudFetch(url).then(function (res) { return res.text(); });
   }
 
-  function cloudSyncPushRemote() {
+  // 樂觀鎖重試上限——被後端拒絕（版本衝突）時，重讀最新內容、重新合併、用新版本號
+  // 再送一次，最多這麼多次。三台裝置真的同時搶著寫才可能連續衝突好幾次，超過這個
+  // 次數就放棄，靜默失敗跟現有背景同步失敗的哲學一致：下次自動同步/切回分頁還有
+  // 機會重新來一輪，不用在使用者完全沒感覺的背景動作上硬要保證這一次一定成功。
+  var MAX_SYNC_PUSH_RETRIES = 3;
+
+  // 【樂觀鎖／版本比對】後端 doPost() 現在會比對 expectedRevision，不一致就回傳
+  // { error:'conflict', currentRevision, currentPayload }——這代表雲端在這台裝置
+  // 讀到的版本之後，已經被別的裝置寫過一次，這次推播如果硬送出去會無聲蓋掉對方剛寫
+  // 進去的內容（見規格「後端最後寫的贏」那個根因）。收到 conflict 時拿 currentPayload
+  // 當作最新的遠端資料，套用既有的 computeMerge()／applyMergedResult() 重新合併一次，
+  // 用後端回傳的 currentRevision 當新的 expectedRevision 再送一次——合併邏輯完全沿用，
+  // 沒有另外寫一套。
+  function cloudSyncPushRemote(retriesLeft) {
     if (!cloudSyncToken) return Promise.resolve();
+    if (typeof retriesLeft !== 'number') retriesLeft = MAX_SYNC_PUSH_RETRIES;
     // 送出前先捕捉這一刻的 lastLocalChangeTime——不能等回應回來才讀，Apps Script 冷啟動/
     // 執行可能要 10~30 秒，這段飛行期間如果又有新異動（例如換日剛好卡進這個空檔），不能
     // 誤算成「這次送出去的 payload 也涵蓋了那次異動」，見 markSynced() 上面的說明跟規格
     // 「換日誤判成已經推播過」那個 bug 的根因。
     var capturedLocalChangeTime = syncMeta.lastLocalChangeTime;
     var payload = buildCurrentSyncPayload();
+    var expectedRevision = syncMeta.currentRevision || 0;
     return cloudFetch(CLOUD_SYNC_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ token: cloudSyncToken, part: 'current', payload: payload })
+      body: JSON.stringify({ token: cloudSyncToken, part: 'current', payload: payload, expectedRevision: expectedRevision })
     }).then(function (res) { return res.text(); }).then(function (text) {
-      // 後端這次寫入完成後的 Drive 檔案時間戳直接跟著回應回來，順手記下來當作「輕量版
-      // 檢查」下次比對的基準，不用另外再多打一次 &meta=1 才知道剛剛寫進去之後的時間。
-      try {
-        var data = JSON.parse(text);
-        if (typeof data.lastModified === 'number') markSynced(data.lastModified, capturedLocalChangeTime);
-      } catch (e) { /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
+      var data;
+      try { data = JSON.parse(text); } catch (e) { return; /* 解析失敗不影響推播本身有沒有成功，純粹是這次沒拿到新的時間戳 */ }
+      if (data && data.error === 'conflict') {
+        if (retriesLeft <= 0) return;
+        syncMeta.currentRevision = typeof data.currentRevision === 'number' ? data.currentRevision : 0;
+        // currentPayload 形狀不對（理論上不該發生，除非雲端那份檔案本身壞掉）就直接放棄，
+        // 不能還是照樣重送本機這份舊 payload——沒有合併過的話，重送等於拿本機舊資料蓋掉
+        // 遠端剛寫入、觸發這次衝突的新內容，反而造成真正的資料遺失。放棄比硬重試安全。
+        if (!(data.currentPayload && data.currentPayload.dayState && Array.isArray(data.currentPayload.taskDefs))) return;
+        applyMergedResult(computeMerge(data.currentPayload));
+        render();
+        return cloudSyncPushRemote(retriesLeft - 1);
+      }
+      if (data && data.error) return; // 其他錯誤（unauthorized/busy）交給既有流程處理，這裡不重試
+      if (typeof data.lastModified === 'number') {
+        syncMeta.currentRevision = typeof data.revision === 'number' ? data.revision : (syncMeta.currentRevision || 0) + 1;
+        markSynced(data.lastModified, capturedLocalChangeTime);
+      }
     }).catch(function () { /* 網路暫時不通，下次有異動再試一次，不特別重試 */ });
   }
 
   // 只有換日封存新的一天之後才會呼叫（見 pushHistoryIfCloud()），不是每次編輯都推播——
   // 歷史資料一旦封存就不會再變動，不需要跟當天資料一樣即時同步，一天一次已經足夠。
-  // 失敗（離線/逾時）直接放棄、不重試——跟 cloudSyncPushRemote() 同一套哲學：下次換日
-  // 還有機會再推一次，不需要為了「這一次一定成功」在使用者完全沒感覺的背景動作上花力氣。
-  function cloudSyncPushHistoryRemote() {
+  // 樂觀鎖版本衝突時的重試邏輯跟 cloudSyncPushRemote() 同一套道理，只是合併用的是
+  // mergeRemoteHistoryIntoLocal()（逐 dateKey 合併），不是 computeMerge()。真正的
+  // 網路失敗（離線/逾時）還是直接放棄、不重試——跟原本同一套哲學：下次換日還有機會
+  // 再推一次，不需要為了「這一次一定成功」在使用者完全沒感覺的背景動作上花力氣。
+  function cloudSyncPushHistoryRemote(retriesLeft) {
     if (!cloudSyncToken) return Promise.resolve();
+    if (typeof retriesLeft !== 'number') retriesLeft = MAX_SYNC_PUSH_RETRIES;
     return buildCloudHistoryPayload().then(function (payload) {
+      var expectedRevision = syncMeta.historyRevision || 0;
       return cloudFetch(CLOUD_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ token: cloudSyncToken, part: 'history', payload: payload })
+        body: JSON.stringify({ token: cloudSyncToken, part: 'history', payload: payload, expectedRevision: expectedRevision })
+      }).then(function (res) { return res.text(); }).then(function (text) {
+        var data;
+        try { data = JSON.parse(text); } catch (e) { return; }
+        if (data && data.error === 'conflict') {
+          if (retriesLeft <= 0) return;
+          syncMeta.historyRevision = typeof data.currentRevision === 'number' ? data.currentRevision : 0;
+          var remoteHistory = (data.currentPayload && data.currentPayload.dayHistory && typeof data.currentPayload.dayHistory === 'object' && !Array.isArray(data.currentPayload.dayHistory)) ? data.currentPayload.dayHistory : {};
+          return mergeRemoteHistoryIntoLocal(remoteHistory).then(function () {
+            return cloudSyncPushHistoryRemote(retriesLeft - 1);
+          });
+        }
+        if (data && !data.error && typeof data.revision === 'number') syncMeta.historyRevision = data.revision;
       });
     }).catch(function () { /* 背景任務，失敗就算了，下次換日再試一次 */ });
   }
@@ -2277,6 +2338,35 @@ window.addEventListener('error', function (e) {
   // 這個問題本身後來被使用者抓到（同步機制重構沒處理到歷史封存這塊），修法是逐 taskId
   // 合併（`mergeHistorySnapshot()`），見規格「歷史封存『誰先換日誰說了算』」一節；本機
   // 從沒記錄過的那天才會直接採用雲端版本，見下面 pullHistoryIfCloud() 的實際寫法。
+  // 逐 dateKey 合併遠端歷史封存進本機——pullHistoryIfCloud() 的例行 pull、跟
+  // cloudSyncPushHistoryRemote() 被後端拒絕（版本衝突）後拿到的「目前最新內容」，
+  // 兩邊都需要同一套「本機有紀錄的話合併、沒有的話直接採用」邏輯，抽出來共用一次，
+  // 不要各自維護一份。
+  function mergeRemoteHistoryIntoLocal(remoteHistory) {
+    var cutoff = addDays(dayState.date, -HISTORY_RETENTION_DAYS);
+    // 本機同一天如果已經有紀錄（例如這台裝置自己剛封存過），不能直接拿遠端的整包蓋過去——
+    // 誰先完成「換日→pull→push」誰就贏，跟本機那份完不完整無關，見 mergeHistorySnapshot()
+    // 上面的說明。改成逐一讀本機既有的版本，有的話合併，沒有的話（本機從沒記錄過這天）
+    // 才直接採用遠端的。
+    var writes = Object.keys(remoteHistory || {}).map(function (dateKey) {
+      var remoteSnapshot = remoteHistory[dateKey];
+      return idbGet('history', dateKey).then(function (localSnapshot) {
+        var finalSnapshot = localSnapshot ? mergeHistorySnapshot(localSnapshot, remoteSnapshot) : remoteSnapshot;
+        return idbSet('history', dateKey, finalSnapshot).then(function () {
+          // 這天如果還落在目前顯示視窗（90 天）內，順便更新記憶體那份 dayHistory，
+          // 不用重新整理頁面就能在歷史畫面看到——只寫 IndexedDB 的話要等下次重新載入
+          // 才會反映在畫面上。
+          if (dateKey >= cutoff) dayHistory[dateKey] = finalSnapshot;
+        });
+      }).catch(function () {});
+    });
+    // 上面每一天只改了記憶體裡的 dayHistory 物件本身，沒有寫回 localStorage（KEY_HIST）——
+    // 開機時 dayHistory 是從 localStorage 讀回來的（見 var dayHistory = loadJSON(KEY_HIST, {})），
+    // 只改記憶體的話，這次抓回來的歷史撐不過一次重新整理。使用者實測回報「走雲端、刷新後
+    // 還是一樣沒有歷史資料」正是這裡漏掉的：全部寫完之後補存一次，讓這次更新真的留得住。
+    return Promise.all(writes).then(function () { saveJSON(KEY_HIST, dayHistory); });
+  }
+
   function pullHistoryIfCloud() {
     var transport = activeSyncTransport();
     if (!transport || !transport.isCloud || !transport.readHistoryText) return Promise.resolve();
@@ -2286,29 +2376,12 @@ window.addEventListener('error', function (e) {
       if (histText && histText.trim()) {
         try { hist = JSON.parse(histText); } catch (e) { hist = null; }
       }
+      // 樂觀鎖：記下這次讀到的版本號，下次推播歷史資料時要帶著這個版本號送出去，
+      // 見 cloudSyncPushHistoryRemote() 上面的說明。沒有這個欄位（還沒升級過的舊檔案）
+      // 當成 0，跟後端「沒帶 _syncRevision 當初始版本」的判斷一致。
+      syncMeta.historyRevision = (hist && typeof hist._syncRevision === 'number') ? hist._syncRevision : 0;
       var remoteHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
-      var cutoff = addDays(dayState.date, -HISTORY_RETENTION_DAYS);
-      // 本機同一天如果已經有紀錄（例如這台裝置自己剛封存過），不能直接拿遠端的整包蓋過去——
-      // 誰先完成「換日→pull→push」誰就贏，跟本機那份完不完整無關，見 mergeHistorySnapshot()
-      // 上面的說明。改成逐一讀本機既有的版本，有的話合併，沒有的話（本機從沒記錄過這天）
-      // 才直接採用遠端的。
-      var writes = Object.keys(remoteHistory).map(function (dateKey) {
-        var remoteSnapshot = remoteHistory[dateKey];
-        return idbGet('history', dateKey).then(function (localSnapshot) {
-          var finalSnapshot = localSnapshot ? mergeHistorySnapshot(localSnapshot, remoteSnapshot) : remoteSnapshot;
-          return idbSet('history', dateKey, finalSnapshot).then(function () {
-            // 這天如果還落在目前顯示視窗（90 天）內，順便更新記憶體那份 dayHistory，
-            // 不用重新整理頁面就能在歷史畫面看到——只寫 IndexedDB 的話要等下次重新載入
-            // 才會反映在畫面上。
-            if (dateKey >= cutoff) dayHistory[dateKey] = finalSnapshot;
-          });
-        }).catch(function () {});
-      });
-      // 上面每一天只改了記憶體裡的 dayHistory 物件本身，沒有寫回 localStorage（KEY_HIST）——
-      // 開機時 dayHistory 是從 localStorage 讀回來的（見 var dayHistory = loadJSON(KEY_HIST, {})），
-      // 只改記憶體的話，這次抓回來的歷史撐不過一次重新整理。使用者實測回報「走雲端、刷新後
-      // 還是一樣沒有歷史資料」正是這裡漏掉的：全部寫完之後補存一次，讓這次更新真的留得住。
-      return Promise.all(writes).then(function () { saveJSON(KEY_HIST, dayHistory); });
+      return mergeRemoteHistoryIntoLocal(remoteHistory);
     }).catch(function () { /* 抓不到就算了，不影響正常使用，下次換日還有機會再補 */ });
   }
 
@@ -2722,6 +2795,9 @@ window.addEventListener('error', function (e) {
       // 成「沒有差異」，把一次真正的後端錯誤當成安全狀態處理掉。
       if (remote && remote.error) return 'remote-error:' + remote.error;
       if (!remote || !remote.dayState || !Array.isArray(remote.taskDefs)) return 'no-diff';
+      // 樂觀鎖：只有雲端這條路才有版本號，記下這次讀到的版本，下次推播時要帶著送出去，
+      // 見 cloudSyncPushRemote() 上面的說明。本機檔案同步沒有這個機制，不用管這個欄位。
+      if (transport.isCloud) syncMeta.currentRevision = typeof remote._syncRevision === 'number' ? remote._syncRevision : 0;
 
       applyMergedResult(computeMerge(remote));
       render();
@@ -2829,6 +2905,9 @@ window.addEventListener('error', function (e) {
         try { remote = JSON.parse(text); } catch (e) { remote = null; }
       }
       if (!remote || remote.error || !remote.dayState || !Array.isArray(remote.taskDefs)) return;
+      // 樂觀鎖：只有雲端這條路才有版本號，記下這次讀到的版本，下次推播時要帶著送出去，
+      // 見 cloudSyncPushRemote() 上面的說明。
+      if (transport.isCloud) syncMeta.currentRevision = typeof remote._syncRevision === 'number' ? remote._syncRevision : 0;
       function finish() {
         markSynced(remoteModified);
         render();
@@ -2839,6 +2918,7 @@ window.addEventListener('error', function (e) {
           if (histText && histText.trim()) {
             try { hist = JSON.parse(histText); } catch (e) { hist = null; }
           }
+          syncMeta.historyRevision = (hist && typeof hist._syncRevision === 'number') ? hist._syncRevision : 0;
           remote.dayHistory = (hist && hist.dayHistory && typeof hist.dayHistory === 'object' && !Array.isArray(hist.dayHistory)) ? hist.dayHistory : {};
           applyImportedData(remote);
           finish();
